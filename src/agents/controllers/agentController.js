@@ -232,7 +232,9 @@ export const createAgent = async (req, res, next) => {
     });
   } catch (error) {
     logger.error("Create agent failed", error, { agentId: req.body?.agentId });
-    next(error);
+    const err = new Error(error.message || "Failed to create agent");
+    err.status = 500;
+    next(err);
   }
 };
 
@@ -265,7 +267,9 @@ export const getAgent = async (req, res, next) => {
     });
   } catch (error) {
     logger.error("Get agent failed", error, { agentId: req.params?.agentId });
-    next(error);
+    const err = new Error(error.message || "Failed to retrieve agent");
+    err.status = 500;
+    next(err);
   }
 };
 
@@ -305,7 +309,9 @@ export const listAgents = async (req, res, next) => {
     }
   } catch (error) {
     logger.error("List agents failed", error);
-    next(error);
+    const err = new Error(error.message || "Failed to list agents");
+    err.status = 500;
+    next(err);
   }
 };
 
@@ -357,7 +363,9 @@ export const updateAgent = async (req, res, next) => {
     logger.error("Update agent failed", error, {
       agentId: req.params?.agentId,
     });
-    next(error);
+    const err = new Error(error.message || "Failed to update agent");
+    err.status = 500;
+    next(err);
   }
 };
 
@@ -417,7 +425,9 @@ export const updateAgentConfig = async (req, res, next) => {
     logger.error("Update agent config failed", error, {
       agentId: req.params?.agentId,
     });
-    next(error);
+    const err = new Error(error.message || "Failed to update agent config");
+    err.status = 500;
+    next(err);
   }
 };
 
@@ -459,6 +469,8 @@ export const deleteAgent = async (req, res, next) => {
     logger.error("Delete agent failed", error, {
       agentId: req.params?.agentId,
     });
-    next(error);
+    const err = new Error(error.message || "Failed to delete agent");
+    err.status = 500;
+    next(err);
   }
 };
