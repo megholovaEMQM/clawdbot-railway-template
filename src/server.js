@@ -11,6 +11,7 @@ import * as tar from "tar";
 // Agent management routes and middleware
 import agentRoutes from "./agents/routes/agentRoutes.js";
 import { authMiddleware } from "./agents/middleware/auth.js";
+import logger from "./agents/utils/logger.js";
 
 // Migrate deprecated CLAWDBOT_* env vars → OPENCLAW_* so existing Railway deployments
 // keep working. Users should update their Railway Variables to use the new names.
@@ -1688,6 +1689,7 @@ proxy.on("proxyReqWs", (_proxyReq, req) => {
 });
 
 app.use(requireDashboardAuth, async (req, res) => {
+  logger.info(`[requireDashboardAuth] ${req.method} ${req.url}`);
   // If not configured, force users to /setup for any non-setup routes.
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
