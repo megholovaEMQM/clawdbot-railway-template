@@ -1688,7 +1688,7 @@ proxy.on("proxyReqWs", (_proxyReq, req) => {
   attachGatewayAuthHeader(req);
 });
 
-app.use(requireDashboardAuth, async (req, res) => {
+app.use(requireDashboardAuth, async (req, res, next) => {
   // 🚀 DO NOT proxy API routes
   if (req.originalUrl.startsWith("/api/")) {
     return next();
