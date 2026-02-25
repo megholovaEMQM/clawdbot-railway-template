@@ -1,10 +1,12 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import logger from "./logger.js";
 
 /**
  * OpenClaw Config Manager
  * Handles reading and writing the /data/.openclaw/openclaw.json config file
+ * All file operations are logged for transparency
  */
 class ConfigManager {
   constructor() {
@@ -17,6 +19,7 @@ class ConfigManager {
    */
   ensureConfigDir() {
     if (!fs.existsSync(this.configDir)) {
+      logger.debug("Creating config directory", { path: this.configDir });
       fs.mkdirSync(this.configDir, { recursive: true });
     }
   }
@@ -29,11 +32,18 @@ class ConfigManager {
     try {
       this.ensureConfigDir();
       if (!fs.existsSync(this.configPath)) {
+        logger.debug("Config file not found, using default", {
+          path: this.configPath,
+        });
         return this.getDefaultConfig();
       }
+      logger.debug("Reading OpenClaw config", { path: this.configPath });
       const content = fs.readFileSync(this.configPath, "utf8");
-      return JSON.parse(content);
+      const config = JSON.parse(content);
+      logger.debug("Config parsed successfully");
+      return config;
     } catch (error) {
+      logger.error("Error reading config", error, { path: this.configPath });
       console.error(`Error reading config: ${error.message}`);
       return this.getDefaultConfig();
     }
@@ -47,9 +57,12 @@ class ConfigManager {
     try {
       this.ensureConfigDir();
       const content = JSON.stringify(config, null, 2);
+      logger.debug("Writing OpenClaw config", { path: this.configPath });
       fs.writeFileSync(this.configPath, content, "utf8");
+      logger.debug("OpenClaw config written successfully");
       return true;
     } catch (error) {
+      logger.error("Failed to write config", error, { path: this.configPath });
       throw {
         statusCode: 500,
         message: `Failed to write config: ${error.message}`,

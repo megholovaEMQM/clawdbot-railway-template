@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import logger from "./logger.js";
 
 /**
  * Agent Storage
@@ -37,6 +38,10 @@ class AgentStorage {
 
     this.wrapperDir = wrapperDir;
     this.agentsFile = path.join(this.wrapperDir, "agents.json");
+    logger.debug("AgentStorage initialized", {
+      wrapperDir,
+      agentsFile: this.agentsFile,
+    });
     this.ensureStorage();
   }
 
@@ -45,9 +50,15 @@ class AgentStorage {
    */
   ensureStorage() {
     if (!fs.existsSync(this.wrapperDir)) {
+      logger.debug("Creating agent storage directory", {
+        path: this.wrapperDir,
+      });
       fs.mkdirSync(this.wrapperDir, { recursive: true });
     }
     if (!fs.existsSync(this.agentsFile)) {
+      logger.debug("Initializing agents storage file", {
+        path: this.agentsFile,
+      });
       fs.writeFileSync(this.agentsFile, JSON.stringify({}, null, 2), "utf8");
     }
   }
@@ -58,9 +69,17 @@ class AgentStorage {
    */
   readAgents() {
     try {
+      logger.debug("Reading agents metadata", { path: this.agentsFile });
       const content = fs.readFileSync(this.agentsFile, "utf8");
-      return JSON.parse(content);
+      const agents = JSON.parse(content);
+      logger.debug("Agents metadata loaded", {
+        count: Object.keys(agents).length,
+      });
+      return agents;
     } catch (error) {
+      logger.error("Error reading agents storage", error, {
+        path: this.agentsFile,
+      });
       console.error(`Error reading agents storage: ${error.message}`);
       return {};
     }
@@ -72,12 +91,20 @@ class AgentStorage {
    */
   writeAgents(agents) {
     try {
+      logger.debug("Writing agents metadata", {
+        path: this.agentsFile,
+        count: Object.keys(agents).length,
+      });
       fs.writeFileSync(
         this.agentsFile,
         JSON.stringify(agents, null, 2),
         "utf8",
       );
+      logger.debug("Agents metadata written successfully");
     } catch (error) {
+      logger.error("Failed to write agents metadata", error, {
+        path: this.agentsFile,
+      });
       throw {
         statusCode: 500,
         message: `Failed to write agents metadata: ${error.message}`,
@@ -91,6 +118,7 @@ class AgentStorage {
    * @param {object} metadata - Metadata to save
    */
   saveAgent(agentId, metadata) {
+    logger.debug("Saving agent metadata", { agentId });
     const agents = this.readAgents();
     agents[agentId] = {
       id: agentId,
@@ -99,6 +127,7 @@ class AgentStorage {
       ...metadata,
     };
     this.writeAgents(agents);
+    logger.debug("Agent metadata saved", { agentId });
     return agents[agentId];
   }
 
@@ -108,8 +137,13 @@ class AgentStorage {
    * @returns {object|null}
    */
   getAgent(agentId) {
+    logger.debug("Retrieving agent metadata", { agentId });
     const agents = this.readAgents();
-    return agents[agentId] || null;
+    const agent = agents[agentId] || null;
+    if (!agent) {
+      logger.debug("Agent not found in storage", { agentId });
+    }
+    return agent;
   }
 
   /**
@@ -117,8 +151,11 @@ class AgentStorage {
    * @returns {array}
    */
   getAllAgents() {
+    logger.debug("Retrieving all agents");
     const agents = this.readAgents();
-    return Object.values(agents);
+    const agentList = Object.values(agents);
+    logger.debug("All agents retrieved", { count: agentList.length });
+    return agentList;
   }
 
   /**
@@ -126,9 +163,11 @@ class AgentStorage {
    * @param {string} agentId - Agent ID
    */
   deleteAgent(agentId) {
+    logger.debug("Deleting agent metadata", { agentId });
     const agents = this.readAgents();
     delete agents[agentId];
     this.writeAgents(agents);
+    logger.debug("Agent metadata deleted", { agentId });
   }
 
   /**
@@ -137,15 +176,20 @@ class AgentStorage {
    * @param {object} metadata - Metadata to merge
    */
   updateAgent(agentId, metadata) {
+    logger.debug("Updating agent metadata", {
+      agentId,
+      fields: Object.keys(metadata),
+    });
     const existingAgent = this.getAgent(agentId);
     if (!existingAgent) {
+      logger.warn("Update failed: agent not found", { agentId });
       throw {
         statusCode: 404,
         message: `Agent ${agentId} not found`,
       };
     }
 
-    return this.saveAgent(agentId, {
+    const updated = this.saveAgent(agentId, {
       ...existingAgent,
       ...metadata,
     });

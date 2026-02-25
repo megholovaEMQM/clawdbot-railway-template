@@ -1,6 +1,7 @@
 import openclawService from "../utils/openclawService.js";
 import configManager from "../utils/configManager.js";
 import agentStorage from "../utils/agentStorage.js";
+import logger from "../utils/logger.js";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
@@ -18,22 +19,38 @@ export const createAgent = async (req, res, next) => {
   try {
     const { agentId, name, workspace, model, config, templateId } = req.body;
 
+    logger.info("POST /api/agents - Create agent request", {
+      agentId,
+      name,
+      templateId,
+    });
+
     // Validate required fields
     if (!agentId) {
+      logger.warn("Create agent failed: missing agentId");
       return res.status(400).json({ error: "agentId is required" });
     }
 
     // Check if agent already exists
     const existingAgent = agentStorage.getAgent(agentId);
     if (existingAgent) {
+      logger.warn("Create agent failed: agent already exists", { agentId });
       return res.status(409).json({ error: `Agent ${agentId} already exists` });
     }
+
+    logger.info("Creating agent via OpenClaw CLI", {
+      agentId,
+      workspace,
+      name,
+    });
 
     // Create agent using OpenClaw CLI
     const ocResult = await openclawService.createAgent(agentId, {
       workspace,
       name,
     });
+
+    logger.debug("OpenClaw agent created", { agentId, output: ocResult });
 
     // Prepare default paths
     const defaultWorkspace =
@@ -50,10 +67,13 @@ export const createAgent = async (req, res, next) => {
 
     // If a templateId is provided, clone the template's files exactly
     if (templateId) {
+      logger.info("Template cloning requested", { agentId, templateId });
+
       // Find template config (from openclaw config) or storage
       const templateConfig = configManager.getAgentConfig(templateId);
       const templateMeta = agentStorage.getAgent(templateId);
       if (!templateConfig && !templateMeta) {
+        logger.error("Template agent not found", null, { templateId });
         return res
           .status(404)
           .json({ error: `Template agent ${templateId} not found` });
@@ -68,6 +88,11 @@ export const createAgent = async (req, res, next) => {
         (templateConfig && templateConfig.agentDir) ||
         (templateMeta && templateMeta.agentDir) ||
         `~/data/.openclaw/agents/${templateId}/agent`;
+
+      logger.debug("Template paths resolved", {
+        templateWorkspace,
+        templateAgentDir,
+      });
 
       // Resolve actual filesystem paths (expand ~)
       const homeDir = process.env.HOME || os.homedir();
@@ -119,7 +144,7 @@ export const createAgent = async (req, res, next) => {
       await fs.mkdir(dstWorkspace, { recursive: true });
 
       // Debug info: resolved source and destination paths
-      console.debug("Template copy:", {
+      logger.debug("Template copy paths resolved", {
         templateId,
         srcAgentDir,
         srcWorkspace,
@@ -129,13 +154,22 @@ export const createAgent = async (req, res, next) => {
 
       // Copy agentDir and workspace from template to new agent (overwrite)
       // Use fs.cp when available (Node 22+), fallback to manual copy otherwise
+      logger.info("Copying template files", {
+        srcAgentDir,
+        dstAgentDir,
+        srcWorkspace,
+        dstWorkspace,
+      });
+
       if (fs.cp) {
+        logger.debug("Using fs.cp for file copy");
         await fs.cp(srcAgentDir, dstAgentDir, { recursive: true, force: true });
         await fs.cp(srcWorkspace, dstWorkspace, {
           recursive: true,
           force: true,
         });
       } else {
+        logger.debug("Using fallback copyRecursive for file copy");
         // Simple recursive copy implementation fallback
         const copyRecursive = async (src, dest) => {
           const stats = await fs.stat(src);
@@ -156,6 +190,11 @@ export const createAgent = async (req, res, next) => {
         await copyRecursive(srcWorkspace, dstWorkspace);
       }
 
+      logger.info("Template files copied successfully", {
+        agentId,
+        templateId,
+      });
+
       // Clone template's agent config into new agent config (preserve fields)
       const cloned = {
         ...(templateConfig || {}),
@@ -166,6 +205,7 @@ export const createAgent = async (req, res, next) => {
     }
 
     // Persist agent config to OpenClaw config
+    logger.info("Updating agent config in OpenClaw", { agentId });
     configManager.updateAgentInConfig(agentId, agentConfig);
 
     // Save agent metadata
@@ -181,14 +221,17 @@ export const createAgent = async (req, res, next) => {
       ...(templateId && { template: templateId }),
     };
 
+    logger.info("Saving agent metadata", { agentId, model: metadata.model });
     const savedAgent = agentStorage.saveAgent(agentId, metadata);
 
+    logger.info("Agent created successfully", { agentId, name: metadata.name });
     res.status(201).json({
       success: true,
       agent: savedAgent,
       openclawOutput: ocResult,
     });
   } catch (error) {
+    logger.error("Create agent failed", error, { agentId: req.body?.agentId });
     next(error);
   }
 };
@@ -201,13 +244,17 @@ export const getAgent = async (req, res, next) => {
   try {
     const { agentId } = req.params;
 
+    logger.info("GET /api/agents/:agentId - Get agent details", { agentId });
+
     const agent = agentStorage.getAgent(agentId);
     if (!agent) {
+      logger.warn("Get agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
     // Enrich with config data
     const configAgent = configManager.getAgentConfig(agentId);
+    logger.debug("Agent retrieved successfully", { agentId });
 
     res.json({
       success: true,
@@ -217,6 +264,7 @@ export const getAgent = async (req, res, next) => {
       },
     });
   } catch (error) {
+    logger.error("Get agent failed", error, { agentId: req.params?.agentId });
     next(error);
   }
 };
@@ -227,24 +275,37 @@ export const getAgent = async (req, res, next) => {
  */
 export const listAgents = async (req, res, next) => {
   try {
-    const agents = agentStorage.getAllAgents();
-    const ocStatus = await openclawService.listAgents();
+    logger.info("GET /api/agents - List all agents");
 
-    res.json({
-      success: true,
-      count: agents.length,
-      agents,
-      openclawStatus: ocStatus.raw || null,
-    });
-  } catch (error) {
-    // If openclaw list fails, still return stored agents
     const agents = agentStorage.getAllAgents();
-    res.json({
-      success: true,
-      count: agents.length,
-      agents,
-      openclawStatus: "unavailable",
-    });
+    logger.debug("Agents retrieved from storage", { count: agents.length });
+
+    try {
+      const ocStatus = await openclawService.listAgents();
+      logger.debug("OpenClaw agent status retrieved");
+
+      res.json({
+        success: true,
+        count: agents.length,
+        agents,
+        openclawStatus: ocStatus.raw || null,
+      });
+    } catch (ocError) {
+      logger.warn("OpenClaw list failed, returning stored agents", {
+        error: ocError.message,
+      });
+      // If openclaw list fails, still return stored agents
+      const agents = agentStorage.getAllAgents();
+      res.json({
+        success: true,
+        count: agents.length,
+        agents,
+        openclawStatus: "unavailable",
+      });
+    }
+  } catch (error) {
+    logger.error("List agents failed", error);
+    next(error);
   }
 };
 
@@ -257,13 +318,20 @@ export const updateAgent = async (req, res, next) => {
     const { agentId } = req.params;
     const updates = req.body;
 
+    logger.info("PATCH /api/agents/:agentId - Update agent metadata", {
+      agentId,
+      updates,
+    });
+
     // Verify agent exists
     const existingAgent = agentStorage.getAgent(agentId);
     if (!existingAgent) {
+      logger.warn("Update agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
     // Update storage
+    logger.debug("Updating agent in storage", { agentId });
     const updatedAgent = agentStorage.updateAgent(agentId, updates);
 
     // Also update in openclaw config if name/workspace/model changed
@@ -272,14 +340,23 @@ export const updateAgent = async (req, res, next) => {
       if (updates.name) configUpdate.name = updates.name;
       if (updates.workspace) configUpdate.workspace = updates.workspace;
       if (updates.model) configUpdate.model = updates.model;
+
+      logger.info("Updating agent config in OpenClaw", {
+        agentId,
+        configUpdate,
+      });
       configManager.patchAgentConfig(agentId, configUpdate);
     }
 
+    logger.info("Agent updated successfully", { agentId });
     res.json({
       success: true,
       agent: updatedAgent,
     });
   } catch (error) {
+    logger.error("Update agent failed", error, {
+      agentId: req.params?.agentId,
+    });
     next(error);
   }
 };
@@ -294,15 +371,26 @@ export const updateAgentConfig = async (req, res, next) => {
     const { agentId } = req.params;
     const configUpdate = req.body;
 
+    logger.info("PATCH /api/agents/:agentId/config - Update agent config", {
+      agentId,
+      configKeys: Object.keys(configUpdate),
+    });
+
     // Verify agent exists in storage
     const existingAgent = agentStorage.getAgent(agentId);
     if (!existingAgent) {
+      logger.warn("Update agent config failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
     // Parse the update
     // Support both { configUpdate: {...} } and direct properties
     let updatePayload = req.body.configUpdate || req.body;
+
+    logger.debug("Merging config update into OpenClaw config", {
+      agentId,
+      updatePayload,
+    });
 
     // Merge into openclaw config
     const updatedConfig = configManager.patchAgentConfig(
@@ -312,15 +400,23 @@ export const updateAgentConfig = async (req, res, next) => {
 
     // Update storage metadata to reflect custom config
     if (updatePayload.model) {
+      logger.debug("Updating agent model in storage", {
+        agentId,
+        model: updatePayload.model,
+      });
       agentStorage.updateAgent(agentId, { model: updatePayload.model });
     }
 
+    logger.info("Agent config updated successfully", { agentId });
     res.json({
       success: true,
       message: `Config updated for agent ${agentId}`,
       config: updatedConfig,
     });
   } catch (error) {
+    logger.error("Update agent config failed", error, {
+      agentId: req.params?.agentId,
+    });
     next(error);
   }
 };
@@ -333,26 +429,102 @@ export const deleteAgent = async (req, res, next) => {
   try {
     const { agentId } = req.params;
 
+    logger.info("DELETE /api/agents/:agentId - Delete agent", { agentId });
+
     // Verify agent exists
     const existingAgent = agentStorage.getAgent(agentId);
     if (!existingAgent) {
+      logger.warn("Delete agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
     // Delete from openclaw
+    logger.info("Deleting agent from OpenClaw", { agentId });
     await openclawService.deleteAgent(agentId);
 
     // Remove from config
+    logger.debug("Removing agent from OpenClaw config", { agentId });
     configManager.removeAgentFromConfig(agentId);
 
     // Remove from storage
+    logger.debug("Removing agent from storage", { agentId });
     agentStorage.deleteAgent(agentId);
 
+    logger.info("Agent deleted successfully", { agentId });
     res.json({
       success: true,
       message: `Agent ${agentId} deleted successfully`,
     });
   } catch (error) {
+    logger.error("Delete agent failed", error, {
+      agentId: req.params?.agentId,
+    });
+    next(error);
+  }
+};
+
+/**
+ * GET /api/agents-logs/agent-api
+ * Get agent API operation logs
+ */
+export const getAgentApiLogs = async (req, res, next) => {
+  try {
+    const logPath = logger.getLogPath();
+
+    try {
+      const content = await fs.readFile(logPath, "utf8");
+      const lines = content.split("\n").filter((line) => line.trim());
+
+      res.json({
+        success: true,
+        logPath,
+        totalLines: lines.length,
+        logs: lines,
+      });
+    } catch (readError) {
+      logger.warn("Log file not found or not readable", { logPath });
+      res.json({
+        success: true,
+        logPath,
+        message: "No logs available yet",
+        logs: [],
+      });
+    }
+  } catch (error) {
+    logger.error("Get agent API logs failed", error);
+    next(error);
+  }
+};
+
+/**
+ * GET /api/agents-logs/commands
+ * Get command execution logs
+ */
+export const getCommandLogs = async (req, res, next) => {
+  try {
+    const logPath = logger.getCommandLogPath();
+
+    try {
+      const content = await fs.readFile(logPath, "utf8");
+      const lines = content.split("\n").filter((line) => line.trim());
+
+      res.json({
+        success: true,
+        logPath,
+        totalLines: lines.length,
+        logs: lines,
+      });
+    } catch (readError) {
+      logger.warn("Command log file not found or not readable", { logPath });
+      res.json({
+        success: true,
+        logPath,
+        message: "No command logs available yet",
+        logs: [],
+      });
+    }
+  } catch (error) {
+    logger.error("Get command logs failed", error);
     next(error);
   }
 };

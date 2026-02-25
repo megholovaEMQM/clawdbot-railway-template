@@ -42,4 +42,17 @@ router.patch("/:agentId", agentController.updateAgent);
  */
 router.delete("/:agentId", agentController.deleteAgent);
 
+// Logging endpoints (access logs for debugging)
+/**
+ * GET /api/agents-logs/agent-api
+ * Get agent API operation logs
+ */
+router.get("-logs/agent-api", agentController.getAgentApiLogs);
+
+/**
+ * GET /api/agents-logs/commands
+ * Get command execution logs
+ */
+router.get("-logs/commands", agentController.getCommandLogs);
+
 export default router;

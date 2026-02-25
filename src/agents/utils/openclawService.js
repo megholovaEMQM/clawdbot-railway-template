@@ -1,12 +1,13 @@
 import { execSync } from "child_process";
 import { exec } from "child_process";
 import { promisify } from "util";
+import logger from "./logger.js";
 
 const execAsync = promisify(exec);
 
 /**
  * OpenClaw Service
- * Wrapper around OpenClaw CLI commands
+ * Wrapper around OpenClaw CLI commands with comprehensive logging
  */
 class OpenClawService {
   /**
@@ -23,7 +24,15 @@ class OpenClawService {
 
       // Run openclaw command to add agent
       const command = `openclaw agents add ${agentId}`;
+      logger.command(command, { agentId, workspace, name });
+
       const { stdout, stderr } = await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        stdout: stdout.substring(0, 200), // Log first 200 chars
+        stderr: stderr ? stderr.substring(0, 200) : null,
+      });
 
       if (stderr && !stderr.includes("successfully")) {
         throw new Error(stderr);
@@ -38,6 +47,7 @@ class OpenClawService {
         output: stdout,
       };
     } catch (error) {
+      logger.error("createAgent failed", error, { agentId });
       throw {
         statusCode: 400,
         message: `Failed to create agent: ${error.message}`,
@@ -56,7 +66,14 @@ class OpenClawService {
       // This is a placeholder as openclaw CLI may not have direct delete
       // In practice, you'd need to clean up the agent directory
       const command = `rm -rf /data/.openclaw/agents/${agentId}`;
+      logger.command(command, { agentId });
+
       await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        agentId,
+      });
 
       return {
         success: true,
@@ -64,6 +81,7 @@ class OpenClawService {
         message: `Agent ${agentId} deleted successfully`,
       };
     } catch (error) {
+      logger.error("deleteAgent failed", error, { agentId });
       throw {
         statusCode: 400,
         message: `Failed to delete agent: ${error.message}`,
@@ -79,7 +97,14 @@ class OpenClawService {
   async listAgents() {
     try {
       const command = `openclaw agents list --bindings`;
+      logger.command(command);
+
       const { stdout } = await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        outputLength: stdout.length,
+      });
 
       // Parse the output (openclaw agents list returns tabular data)
       // For now, return raw output - user can parse as needed
@@ -89,6 +114,7 @@ class OpenClawService {
         raw: stdout,
       };
     } catch (error) {
+      logger.error("listAgents failed", error);
       throw {
         statusCode: 400,
         message: `Failed to list agents: ${error.message}`,
@@ -103,9 +129,14 @@ class OpenClawService {
    */
   async isOpenClawAvailable() {
     try {
-      execSync("which openclaw", { stdio: "ignore" });
+      const command = "which openclaw";
+      logger.debug("Checking OpenClaw availability", { command });
+
+      execSync(command, { stdio: "ignore" });
+      logger.debug("OpenClaw is available");
       return true;
     } catch {
+      logger.warn("OpenClaw not found in PATH");
       return false;
     }
   }
@@ -117,12 +148,21 @@ class OpenClawService {
   async getGatewayStatus() {
     try {
       const command = `openclaw status`;
+      logger.command(command);
+
       const { stdout } = await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        outputLength: stdout.length,
+      });
+
       return {
         success: true,
         status: stdout,
       };
     } catch (error) {
+      logger.error("getGatewayStatus failed", error);
       return {
         success: false,
         status: error.message,
