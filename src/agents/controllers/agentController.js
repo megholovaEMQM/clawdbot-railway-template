@@ -15,7 +15,7 @@ import os from "os";
  * POST /api/agents
  * Create a new agent
  */
-export const createAgent = async (req, res, next) => {
+export const createAgent = async (req, res) => {
   try {
     const { agentId, name, workspace, model, config, templateId } = req.body;
 
@@ -240,7 +240,7 @@ export const createAgent = async (req, res, next) => {
  * GET /api/agents/:agentId
  * Get agent details
  */
-export const getAgent = async (req, res, next) => {
+export const getAgent = async (req, res) => {
   try {
     const { agentId } = req.params;
 
@@ -265,7 +265,9 @@ export const getAgent = async (req, res, next) => {
     });
   } catch (error) {
     logger.error("Get agent failed", error, { agentId: req.params?.agentId });
-    res.status(500).json({ error: error.message || "Failed to retrieve agent" });
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to retrieve agent" });
   }
 };
 
@@ -273,7 +275,7 @@ export const getAgent = async (req, res, next) => {
  * GET /api/agents
  * List all agents
  */
-export const listAgents = async (req, res, next) => {
+export const listAgents = async (req, res) => {
   try {
     logger.info("GET /api/agents - List all agents");
 
@@ -313,7 +315,7 @@ export const listAgents = async (req, res, next) => {
  * PATCH /api/agents/:agentId
  * Update agent metadata
  */
-export const updateAgent = async (req, res, next) => {
+export const updateAgent = async (req, res) => {
   try {
     const { agentId } = req.params;
     const updates = req.body;
@@ -366,7 +368,7 @@ export const updateAgent = async (req, res, next) => {
  * Update openclaw config for an agent
  * Body: { configUpdate: object } or { model, workspace, bindings, etc. }
  */
-export const updateAgentConfig = async (req, res, next) => {
+export const updateAgentConfig = async (req, res) => {
   try {
     const { agentId } = req.params;
     const configUpdate = req.body;
@@ -417,7 +419,9 @@ export const updateAgentConfig = async (req, res, next) => {
     logger.error("Update agent config failed", error, {
       agentId: req.params?.agentId,
     });
-    res.status(500).json({ error: error.message || "Failed to update agent config" });
+    res
+      .status(500)
+      .json({ error: error.message || "Failed to update agent config" });
   }
 };
 
@@ -425,7 +429,7 @@ export const updateAgentConfig = async (req, res, next) => {
  * DELETE /api/agents/:agentId
  * Delete an agent
  */
-export const deleteAgent = async (req, res, next) => {
+export const deleteAgent = async (req, res) => {
   try {
     const { agentId } = req.params;
 

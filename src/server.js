@@ -1689,7 +1689,10 @@ proxy.on("proxyReqWs", (_proxyReq, req) => {
 });
 
 app.use(requireDashboardAuth, async (req, res) => {
-  logger.info(`[requireDashboardAuth] ${req.method} ${req.url}`);
+  // 🚀 DO NOT proxy API routes
+  if (req.originalUrl.startsWith("/api/")) {
+    return next();
+  }
   // If not configured, force users to /setup for any non-setup routes.
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
