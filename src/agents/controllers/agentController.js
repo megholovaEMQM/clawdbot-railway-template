@@ -5,6 +5,7 @@ import logger from "../utils/logger.js";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import { randomBytes } from "crypto";
 
 /**
  * Agent Controller
@@ -13,226 +14,198 @@ import os from "os";
 
 /**
  * POST /api/agents
- * Create a new agent
+ * Create a new agent from an existing openclaw template agent.
+ * Body: { agentId: string (existing template), name: string, model: string }
+ *
+ * - agentId: must be an existing agent in openclaw (used as template)
+ * - name: display name for the new agent (also used to derive its ID)
+ * - model: LLM model string to configure for the new agent
+ *
+ * Copies AGENTS.md, BOOTSTRAP.md, HEARTBEAT.md, IDENTITY.md, SOUL.md,
+ * TOOLS.md, USER.md from the template agent's workspace into the new agent's workspace.
  */
 export const createAgent = async (req, res) => {
   try {
-    const { agentId, name, workspace, model, config, templateId } = req.body;
+    const { agentId: templateId, name, model } = req.body;
 
-    logger.info("POST /api/agents - Create agent request", {
-      agentId,
-      name,
+    logger.info("POST /api/agents - Create agent from template", {
       templateId,
+      name,
+      model,
     });
 
     // Validate required fields
-    if (!agentId) {
-      logger.warn("Create agent failed: missing agentId");
-      return res.status(400).json({ error: "agentId is required" });
+    if (!templateId || !name || !model) {
+      logger.warn("Create agent failed: missing required fields", {
+        templateId,
+        name,
+        model,
+      });
+      return res
+        .status(400)
+        .json({ error: "agentId (template), name, and model are required" });
     }
 
-    // Check if agent already exists
-    const existingAgent = agentStorage.getAgent(agentId);
-    if (existingAgent) {
-      logger.warn("Create agent failed: agent already exists", { agentId });
-      return res.status(409).json({ error: `Agent ${agentId} already exists` });
+    // Verify the template agent exists in openclaw
+    // Primary check: openclaw CLI; fallback: local config and storage
+    const existsInCli = await openclawService.agentExists(templateId);
+    const templateConfig = configManager.getAgentConfig(templateId);
+    const templateMeta = agentStorage.getAgent(templateId);
+
+    if (!existsInCli && !templateConfig && !templateMeta) {
+      logger.warn("Template agent not found in openclaw", { templateId });
+      return res
+        .status(404)
+        .json({ error: `Agent ${templateId} not found in openclaw` });
     }
 
-    logger.info("Creating agent via OpenClaw CLI", {
-      agentId,
-      workspace,
-      name,
-    });
+    // Derive new agent ID: templateId + random 8-char hex suffix
+    const newAgentId = `${templateId}-${randomBytes(4).toString("hex")}`;
 
-    // Create agent using OpenClaw CLI
-    const ocResult = await openclawService.createAgent(agentId, {
-      workspace,
-      name,
-    });
+    // Check if the new agent already exists
+    const existingNew =
+      agentStorage.getAgent(newAgentId) ||
+      configManager.getAgentConfig(newAgentId);
+    if (existingNew) {
+      logger.warn("Create agent failed: new agent already exists", {
+        newAgentId,
+      });
+      return res
+        .status(409)
+        .json({ error: `Agent ${newAgentId} already exists` });
+    }
 
-    logger.debug("OpenClaw agent created", { agentId, output: ocResult });
+    // Resolve template workspace path
+    const homeDir = process.env.HOME || os.homedir();
+    const expand = (p) =>
+      p.startsWith("~") ? path.join(homeDir, p.slice(1)) : p;
 
-    // Prepare default paths
-    const defaultWorkspace =
-      workspace || `~/data/.openclaw/workspace-${agentId}`;
-    const defaultAgentDir = `~/data/.openclaw/agents/${agentId}/agent`;
+    const rawTemplateWorkspace =
+      (templateConfig && templateConfig.workspace) ||
+      (templateMeta && templateMeta.workspace) ||
+      `~/data/.openclaw/workspace-${templateId}`;
 
-    let agentConfig = {
-      workspace: defaultWorkspace,
-      agentDir: defaultAgentDir,
-      ...(name && { name }),
-      ...(model && { model }),
-      ...(config && config),
+    // Try several candidate paths to locate the actual template workspace
+    const resolveExisting = async (candidates) => {
+      for (const c of candidates) {
+        try {
+          await fs.stat(c);
+          return c;
+        } catch {
+          // not found, try next
+        }
+      }
+      return null;
     };
 
-    // If a templateId is provided, clone the template's files exactly
-    if (templateId) {
-      logger.info("Template cloning requested", { agentId, templateId });
+    const templateWorkspaceExpanded = expand(rawTemplateWorkspace);
+    const templateWorkspace =
+      (await resolveExisting([
+        templateWorkspaceExpanded,
+        path.join(homeDir, ".openclaw", `workspace-${templateId}`),
+        path.join(homeDir, "data", ".openclaw", `workspace-${templateId}`),
+      ])) || templateWorkspaceExpanded;
 
-      // Find template config (from openclaw config) or storage
-      const templateConfig = configManager.getAgentConfig(templateId);
-      const templateMeta = agentStorage.getAgent(templateId);
-      if (!templateConfig && !templateMeta) {
-        logger.error("Template agent not found", null, { templateId });
-        return res
-          .status(404)
-          .json({ error: `Template agent ${templateId} not found` });
+    logger.debug("Resolved template workspace", {
+      templateId,
+      templateWorkspace,
+    });
+
+    // Create the new agent via openclaw CLI
+    logger.info("Creating new agent via OpenClaw CLI", { newAgentId, name });
+    const ocResult = await openclawService.createAgent(newAgentId, { name });
+    logger.debug("OpenClaw agent created", { newAgentId, output: ocResult });
+
+    // Determine new agent paths
+    const newWorkspace = `~/data/.openclaw/workspace-${newAgentId}`;
+    const newAgentDir = `~/data/.openclaw/agents/${newAgentId}/agent`;
+    const newWorkspaceExpanded = expand(newWorkspace);
+
+    // Ensure new workspace directory exists
+    await fs.mkdir(newWorkspaceExpanded, { recursive: true });
+
+    // Copy the 7 workspace MD files from the template to the new agent
+    const mdFiles = [
+      "AGENTS.md",
+      "BOOTSTRAP.md",
+      "HEARTBEAT.md",
+      "IDENTITY.md",
+      "SOUL.md",
+      "TOOLS.md",
+      "USER.md",
+    ];
+
+    logger.info("Copying template MD files to new workspace", {
+      templateWorkspace,
+      newWorkspaceExpanded,
+    });
+
+    for (const file of mdFiles) {
+      const srcFile = path.join(templateWorkspace, file);
+      const dstFile = path.join(newWorkspaceExpanded, file);
+      try {
+        await fs.copyFile(srcFile, dstFile);
+        logger.debug(`Copied ${file}`, { srcFile, dstFile });
+      } catch (e) {
+        logger.error(`Failed to copy ${file}`, e, { srcFile, dstFile });
+        throw new Error(
+          `Failed to copy ${file} from template workspace: ${e.message}`,
+        );
       }
-
-      // Resolve template paths (prefer configManager values)
-      const templateWorkspace =
-        (templateConfig && templateConfig.workspace) ||
-        (templateMeta && templateMeta.workspace) ||
-        `~/data/.openclaw/workspace-${templateId}`;
-      const templateAgentDir =
-        (templateConfig && templateConfig.agentDir) ||
-        (templateMeta && templateMeta.agentDir) ||
-        `~/data/.openclaw/agents/${templateId}/agent`;
-
-      logger.debug("Template paths resolved", {
-        templateWorkspace,
-        templateAgentDir,
-      });
-
-      // Resolve actual filesystem paths (expand ~)
-      const homeDir = process.env.HOME || os.homedir();
-      const expand = (p) =>
-        p.startsWith("~") ? path.join(homeDir, p.slice(1)) : p;
-      const srcAgentDirCandidate = expand(templateAgentDir);
-      const srcWorkspaceCandidate = expand(templateWorkspace);
-
-      // Resolve existing source paths from several common locations
-      const resolveExisting = async (candidates) => {
-        for (const c of candidates) {
-          try {
-            const stat = await fs.stat(c);
-            if (stat) return c;
-          } catch (e) {
-            // continue
-          }
-        }
-        return null;
-      };
-
-      const srcAgentDir =
-        (await resolveExisting([
-          srcAgentDirCandidate,
-          path.join(homeDir, ".openclaw", "agents", templateId, "agent"),
-          path.join(
-            homeDir,
-            "data",
-            ".clawdbot",
-            "agents",
-            templateId,
-            "agent",
-          ),
-          path.join(process.cwd(), templateAgentDir),
-        ])) || srcAgentDirCandidate;
-
-      const srcWorkspace =
-        (await resolveExisting([
-          srcWorkspaceCandidate,
-          path.join(homeDir, ".openclaw", `workspace-${templateId}`),
-          path.join(homeDir, "data", ".clawdbot", `workspace-${templateId}`),
-          path.join(process.cwd(), templateWorkspace),
-        ])) || srcWorkspaceCandidate;
-      const dstAgentDir = expand(defaultAgentDir);
-      const dstWorkspace = expand(defaultWorkspace);
-
-      // Ensure destination directories exist
-      await fs.mkdir(path.dirname(dstAgentDir), { recursive: true });
-      await fs.mkdir(dstWorkspace, { recursive: true });
-
-      // Debug info: resolved source and destination paths
-      logger.debug("Template copy paths resolved", {
-        templateId,
-        srcAgentDir,
-        srcWorkspace,
-        dstAgentDir,
-        dstWorkspace,
-      });
-
-      // Copy agentDir and workspace from template to new agent (overwrite)
-      // Use fs.cp when available (Node 22+), fallback to manual copy otherwise
-      logger.info("Copying template files", {
-        srcAgentDir,
-        dstAgentDir,
-        srcWorkspace,
-        dstWorkspace,
-      });
-
-      if (fs.cp) {
-        logger.debug("Using fs.cp for file copy");
-        await fs.cp(srcAgentDir, dstAgentDir, { recursive: true, force: true });
-        await fs.cp(srcWorkspace, dstWorkspace, {
-          recursive: true,
-          force: true,
-        });
-      } else {
-        logger.debug("Using fallback copyRecursive for file copy");
-        // Simple recursive copy implementation fallback
-        const copyRecursive = async (src, dest) => {
-          const stats = await fs.stat(src);
-          if (stats.isDirectory()) {
-            await fs.mkdir(dest, { recursive: true });
-            const entries = await fs.readdir(src);
-            for (const entry of entries) {
-              await copyRecursive(
-                path.join(src, entry),
-                path.join(dest, entry),
-              );
-            }
-          } else {
-            await fs.copyFile(src, dest);
-          }
-        };
-        await copyRecursive(srcAgentDir, dstAgentDir);
-        await copyRecursive(srcWorkspace, dstWorkspace);
-      }
-
-      logger.info("Template files copied successfully", {
-        agentId,
-        templateId,
-      });
-
-      // Clone template's agent config into new agent config (preserve fields)
-      const cloned = {
-        ...(templateConfig || {}),
-        workspace: defaultWorkspace,
-        agentDir: defaultAgentDir,
-      };
-      agentConfig = { ...agentConfig, ...cloned };
     }
 
-    // Persist agent config to OpenClaw config
-    logger.info("Updating agent config in OpenClaw", { agentId });
-    configManager.updateAgentInConfig(agentId, agentConfig);
+    logger.info("Template MD files copied successfully", {
+      newAgentId,
+      templateId,
+    });
 
-    // Save agent metadata
+    // Persist agent config to openclaw with the user-specified model
+    const agentConfig = {
+      workspace: newWorkspace,
+      agentDir: newAgentDir,
+      name,
+      model,
+    };
+
+    logger.info("Updating agent config in OpenClaw", { newAgentId, model });
+    configManager.updateAgentInConfig(newAgentId, agentConfig);
+
+    // Save agent metadata in wrapper storage
     const metadata = {
-      id: agentId,
-      name: name || agentId,
-      workspace: agentConfig.workspace,
-      agentDir: agentConfig.agentDir,
-      model: agentConfig.model || model || "google/gemini-2.5-flash-lite",
+      id: newAgentId,
+      name,
+      workspace: newWorkspace,
+      agentDir: newAgentDir,
+      model,
+      template: templateId,
       createdAt: new Date().toISOString(),
       status: "created",
-      ...(config && { customConfig: config }),
-      ...(templateId && { template: templateId }),
     };
 
-    logger.info("Saving agent metadata", { agentId, model: metadata.model });
-    const savedAgent = agentStorage.saveAgent(agentId, metadata);
+    logger.info("Saving agent metadata", { newAgentId, model });
+    const savedAgent = agentStorage.saveAgent(newAgentId, metadata);
 
-    logger.info("Agent created successfully", { agentId, name: metadata.name });
-    res.status(201).json({
+    logger.info("Agent created successfully", {
+      newAgentId,
+      name,
+      model,
+      template: templateId,
+    });
+
+    return res.status(201).json({
       success: true,
+      agentId: newAgentId,
       agent: savedAgent,
       openclawOutput: ocResult,
     });
   } catch (error) {
-    logger.error("Create agent failed", error, { agentId: req.body?.agentId });
-    res.status(500).json({ error: error.message || "Failed to create agent" });
+    logger.error("Create agent failed", error, {
+      templateId: req.body?.agentId,
+      name: req.body?.name,
+    });
+    return res
+      .status(500)
+      .json({ error: error.message || "Failed to create agent" });
   }
 };
 
@@ -273,14 +246,20 @@ export const getAgent = async (req, res) => {
 
 /**
  * GET /api/agents
- * List all agents
+ * List template agents (agents whose ID starts with "template-")
  */
 export const listAgents = async (req, res) => {
   try {
-    logger.info("GET /api/agents - List all agents");
+    logger.info("GET /api/agents - List template agents");
 
-    const agents = agentStorage.getAllAgents();
-    logger.debug("Agents retrieved from storage", { count: agents.length });
+    const allAgents = agentStorage.getAllAgents();
+    const agents = allAgents.filter(
+      (a) => a.id && a.id.startsWith("template-"),
+    );
+    logger.debug("Template agents retrieved from storage", {
+      total: allAgents.length,
+      templates: agents.length,
+    });
 
     try {
       const ocStatus = await openclawService.listAgents();
@@ -293,11 +272,9 @@ export const listAgents = async (req, res) => {
         openclawStatus: ocStatus.raw || null,
       });
     } catch (ocError) {
-      logger.warn("OpenClaw list failed, returning stored agents", {
+      logger.warn("OpenClaw list failed, returning stored template agents", {
         error: ocError.message,
       });
-      // If openclaw list fails, still return stored agents
-      const agents = agentStorage.getAllAgents();
       res.json({
         success: true,
         count: agents.length,
