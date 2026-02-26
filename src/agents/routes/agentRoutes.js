@@ -1,6 +1,5 @@
 import express from "express";
 import * as agentController from "../controllers/agentController.js";
-import logger from "../utils/logger.js";
 
 const router = express.Router();
 
@@ -9,10 +8,7 @@ const router = express.Router();
  * Body: { agentId: string, name?: string, workspace?: string, model?: string }
  */
 
-logger.info("AGENT ROUTER HIT:", {
-  method: req.method,
-  url: req.originalUrl,
-});
+// router-level logging happens inside controllers; avoid referencing req at module load
 
 router.post("/", agentController.createAgent);
 
