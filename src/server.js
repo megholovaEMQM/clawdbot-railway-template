@@ -11,7 +11,6 @@ import * as tar from "tar";
 // Agent management routes and middleware
 import agentRoutes from "./agents/routes/agentRoutes.js";
 import { authMiddleware } from "./agents/middleware/auth.js";
-import logger from "./agents/utils/logger.js";
 
 // Migrate deprecated CLAWDBOT_* env vars → OPENCLAW_* so existing Railway deployments
 // keep working. Users should update their Railway Variables to use the new names.
@@ -1640,12 +1639,13 @@ proxy.on("error", (err, _req, res) => {
   }
 });
 
-// --- Agent Management API Routes (MUST come before gateway proxy middleware) ---
+// --- Agent Management API Routes (MUST come before any catch-all middleware) ---
 // JWT-secured API for managing agents
+// These are completely isolated from the gateway proxy
 const JWT_SECRET = process.env.JWT_SECRET || "abcd1234";
 app.use("/api/agents", authMiddleware(JWT_SECRET), agentRoutes);
 
-// Catch-all 404 for unmapped API routes
+// Catch-all 404 for unmapped API routes (also prevents gateway proxy for /api/*)
 app.use("/api/", (req, res) => {
   res.status(404).json({ error: "API endpoint not found", path: req.path });
 });
@@ -1656,7 +1656,6 @@ app.use("/api/", (req, res) => {
 function requireDashboardAuth(req, res, next) {
   if (req.path === "/healthz" || req.path === "/setup/healthz") return next();
   if (req.path.startsWith("/hooks")) return next(); // allow OpenClaw webhook endpoints to bypass dashboard auth
-  if (req.path.startsWith("/api/")) return next(); // JWT-authenticated endpoints
   if (!SETUP_PASSWORD) return next(); // no password configured → open
   const header = req.headers.authorization || "";
   const [scheme, encoded] = header.split(" ");
@@ -1688,11 +1687,9 @@ proxy.on("proxyReqWs", (_proxyReq, req) => {
   attachGatewayAuthHeader(req);
 });
 
-app.use(requireDashboardAuth, async (req, res, next) => {
-  // 🚀 DO NOT proxy API routes
-  if (req.originalUrl.startsWith("/api/")) {
-    return next();
-  }
+// --- Gateway proxy (handles all non-API, non-setup routes) ---
+// Note: /api/* routes are already handled above and never reach here
+app.use(requireDashboardAuth, async (req, res) => {
   // If not configured, force users to /setup for any non-setup routes.
   if (!isConfigured() && !req.path.startsWith("/setup")) {
     return res.redirect("/setup");
