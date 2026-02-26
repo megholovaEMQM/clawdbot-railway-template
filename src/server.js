@@ -8,9 +8,8 @@ import express from "express";
 import httpProxy from "http-proxy";
 import * as tar from "tar";
 
-// Agent management routes and middleware
-import agentRoutes from "./agents/routes/agentRoutes.js";
-import { authMiddleware } from "./agents/middleware/auth.js";
+// API route setup
+import setupApiRoutes from "./api.js";
 import logger from "./agents/utils/logger.js";
 
 // Migrate deprecated CLAWDBOT_* env vars → OPENCLAW_* so existing Railway deployments
@@ -1646,15 +1645,9 @@ proxy.on("error", (err, _req, res) => {
 });
 
 // --- Agent Management API Routes (MUST come before any catch-all middleware) ---
-// JWT-secured API for managing agents
-// These are completely isolated from the gateway proxy
+// Completely isolated from gateway proxy - registered at app root
 const JWT_SECRET = process.env.JWT_SECRET || "abcd1234";
-app.use("/api/agents", authMiddleware(JWT_SECRET), agentRoutes);
-
-// Catch-all 404 for unmapped API routes (also prevents gateway proxy for /api/*)
-app.use("/api/", (req, res) => {
-  res.status(404).json({ error: "API endpoint not found", path: req.path });
-});
+setupApiRoutes(app, JWT_SECRET);
 
 // --- Dashboard password protection ---
 // Require the same SETUP_PASSWORD for the entire Control UI dashboard,
