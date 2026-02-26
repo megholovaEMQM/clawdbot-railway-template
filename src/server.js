@@ -323,7 +323,7 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
 app.use((req, _res, next) => {
-  logger.info(">>> RAW PATH:", req.method, req.originalUrl);
+  logger.info(">>> RAW PATH:", req.originalUrl);
   next();
 });
 
