@@ -124,6 +124,30 @@ class OpenClawService {
   }
 
   /**
+   * Check if a specific agent exists in openclaw
+   * @param {string} agentId - Agent ID to check
+   * @returns {Promise<boolean>}
+   */
+  async agentExists(agentId) {
+    try {
+      const command = `openclaw agents list`;
+      logger.debug("Checking if agent exists in openclaw", { agentId, command });
+
+      const { stdout } = await execAsync(command);
+      const exists = stdout.includes(agentId);
+
+      logger.debug("Agent existence check result", { agentId, exists });
+      return exists;
+    } catch (error) {
+      logger.warn("agentExists CLI check failed, falling back to false", {
+        agentId,
+        error: error.message,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Validate OpenClaw is installed and running
    * @returns {Promise<boolean>}
    */
