@@ -6,8 +6,8 @@ const router = express.Router();
 console.log("AGENT ROUTES FILE LOADED");
 
 /**
- * POST /api/agents - Create a new agent
- * Body: { agentId: string, name?: string, workspace?: string, model?: string }
+ * POST /api/agents - Create a new agent from a template
+ * Body: { templateId: string, configVars: { AGENT_NAME: string, ...placeholderVars } }
  */
 
 // router-level logging happens inside controllers; avoid referencing req at module load

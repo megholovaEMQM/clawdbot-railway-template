@@ -189,7 +189,7 @@ class AgentStorage {
       };
     }
 
-    const updated = this.saveAgent(agentId, {
+    return this.saveAgent(agentId, {
       ...existingAgent,
       ...metadata,
     });
