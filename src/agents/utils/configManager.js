@@ -10,7 +10,11 @@ import logger from "./logger.js";
  */
 class ConfigManager {
   constructor() {
-    this.configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
+    // Prefer OPENCLAW_STATE_DIR env var (set to /data/.openclaw on Railway).
+    // Fall back to ~/.openclaw for local development.
+    const stateDir = process.env.OPENCLAW_STATE_DIR?.trim()
+      || path.join(os.homedir(), ".openclaw");
+    this.configPath = path.join(stateDir, "openclaw.json");
     this.configDir = path.dirname(this.configPath);
   }
 
