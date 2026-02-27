@@ -267,7 +267,9 @@ export const listAgents = async (req, res) => {
       const entries = await fs.readdir(openclawAgentsDir, {
         withFileTypes: true,
       });
-      agentIds = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      agentIds = entries
+        .filter((e) => e.isDirectory() && e.name !== "main")
+        .map((e) => e.name);
       logger.debug("Agent directories found in /data/.openclaw/agents", {
         count: agentIds.length,
       });
