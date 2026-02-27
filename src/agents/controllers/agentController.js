@@ -116,8 +116,11 @@ export const createAgent = async (req, res) => {
       for (const [varName, value] of Object.entries(placeholderVars)) {
         processed = processed.replaceAll(`{{${varName}}}`, value);
       }
-      await fs.writeFile(path.join(newWorkspaceDir, file), processed, "utf8");
-      logger.debug(`Written ${file}`, { newWorkspaceDir });
+      // BOOTSTRAP.spawned.md is the bootstrap template for spawned agents;
+      // write it as BOOTSTRAP.md in the new workspace.
+      const outFile = file === "BOOTSTRAP.spawned.md" ? "BOOTSTRAP.md" : file;
+      await fs.writeFile(path.join(newWorkspaceDir, outFile), processed, "utf8");
+      logger.debug(`Written ${outFile}`, { newWorkspaceDir });
     }
 
     // Inherit model from template config/storage
