@@ -145,6 +145,63 @@ class OpenClawService {
   }
 
   /**
+   * List all cron jobs
+   * @returns {Promise<Array>} - Array of cron job objects
+   */
+  async listCronJobs() {
+    try {
+      const command = `openclaw cron list --json`;
+      logger.command(command);
+
+      const { stdout } = await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        outputLength: stdout.length,
+      });
+
+      const jobs = JSON.parse(stdout);
+      return Array.isArray(jobs) ? jobs : [];
+    } catch (error) {
+      logger.error("listCronJobs failed", error);
+      throw {
+        statusCode: 400,
+        message: `Failed to list cron jobs: ${error.message}`,
+        details: error.message,
+      };
+    }
+  }
+
+  /**
+   * Delete a cron job by ID
+   * @param {string} jobId - Cron job ID to delete
+   * @returns {Promise<object>}
+   */
+  async deleteCronJob(jobId) {
+    try {
+      const command = `openclaw cron remove ${jobId}`;
+      logger.command(command, { jobId });
+
+      const { stdout, stderr } = await execAsync(command);
+
+      logger.commandResult(command, {
+        success: true,
+        stdout: stdout.substring(0, 200),
+        stderr: stderr ? stderr.substring(0, 200) : null,
+      });
+
+      return { success: true, jobId };
+    } catch (error) {
+      logger.error("deleteCronJob failed", error, { jobId });
+      throw {
+        statusCode: 400,
+        message: `Failed to delete cron job ${jobId}: ${error.message}`,
+        details: error.message,
+      };
+    }
+  }
+
+  /**
    * Check if a specific agent exists in openclaw
    * @param {string} agentId - Agent ID to check
    * @returns {Promise<boolean>}
