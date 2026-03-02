@@ -59,9 +59,12 @@ class OpenClawService {
   /**
    * Delete an agent
    * @param {string} agentId - Agent identifier to delete
+   * @param {object} options - Optional paths to remove
+   * @param {string} [options.workspace] - Workspace directory path
+   * @param {string} [options.agentDir] - Agent state directory path
    * @returns {Promise<object>} - Result of deletion
    */
-  async deleteAgent(agentId) {
+  async deleteAgent(agentId, options = {}) {
     try {
       // Run openclaw CLI delete — updates openclaw.json but may fail to Trash
       // directories in containerised environments (no Trash available).
@@ -78,9 +81,11 @@ class OpenClawService {
 
       // Openclaw may fail to move directories to Trash and leave them behind.
       // Manually remove the workspace and agent directories to ensure a clean delete.
+      // Use caller-supplied paths when available (user agents live under /data/user-agents/,
+      // not /data/.openclaw/).
       const pathsToRemove = [
-        `/data/.openclaw/workspace-${agentId}`,
-        `/data/.openclaw/agents/${agentId}`,
+        options.workspace || `/data/.openclaw/workspace-${agentId}`,
+        options.agentDir  || `/data/.openclaw/agents/${agentId}`,
       ];
 
       for (const p of pathsToRemove) {
