@@ -486,9 +486,12 @@ export const deleteAgent = async (req, res) => {
       });
     }
 
-    // Delete from openclaw
+    // Delete from openclaw (pass stored paths so the correct workspace is removed)
     logger.info("Deleting agent from OpenClaw", { agentId });
-    await openclawService.deleteAgent(agentId);
+    await openclawService.deleteAgent(agentId, {
+      workspace: existingAgent.workspace,
+      agentDir: existingAgent.agentDir,
+    });
 
     // Remove from config
     logger.debug("Removing agent from OpenClaw config", { agentId });
