@@ -438,6 +438,7 @@ export const updateAgentConfig = async (req, res) => {
 /**
  * DELETE /api/agents/:agentId
  * Delete an agent
+ * Template agents (those with a /templates/ subdirectory in their workspace) cannot be deleted.
  */
 export const deleteAgent = async (req, res) => {
   try {
@@ -450,6 +451,39 @@ export const deleteAgent = async (req, res) => {
     if (!existingAgent) {
       logger.warn("Delete agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
+    }
+
+    // Block deletion of template agents (agents that have a templates/ directory)
+    const templateFilesDir = `/data/.openclaw/workspace-${agentId}/templates`;
+    try {
+      await fs.stat(templateFilesDir);
+      // If stat succeeds, this is a template agent — block deletion
+      logger.warn("Delete agent blocked: agent is a template", { agentId, templateFilesDir });
+      return res.status(400).json({
+        error: `Agent ${agentId} is a template and cannot be deleted`,
+      });
+    } catch {
+      // templates/ dir does not exist — not a template agent, proceed
+    }
+
+    // Cancel any cron jobs belonging to this agent
+    try {
+      const cronJobs = await openclawService.listCronJobs();
+      const agentJobs = cronJobs.filter((job) => job.agentId === agentId);
+      if (agentJobs.length > 0) {
+        logger.info("Removing cron jobs for agent", { agentId, count: agentJobs.length });
+        for (const job of agentJobs) {
+          const jobId = job.jobId ?? job.id;
+          await openclawService.deleteCronJob(jobId);
+          logger.debug("Cron job removed", { agentId, jobId });
+        }
+      }
+    } catch (cronErr) {
+      // Non-fatal: log and continue with agent deletion
+      logger.warn("Failed to clean up cron jobs for agent", {
+        agentId,
+        error: cronErr.message,
+      });
     }
 
     // Delete from openclaw
