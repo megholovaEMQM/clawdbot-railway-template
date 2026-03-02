@@ -87,6 +87,9 @@ class OpenClawService {
       const pathsToRemove = [
         options.workspace || `/data/.openclaw/workspace-${agentId}`,
         options.agentDir  || `/data/.openclaw/agents/${agentId}`,
+        // Always remove the openclaw session directory, even for user agents
+        // whose agentDir lives under /data/user-agents/ instead.
+        ...(options.agentDir ? [`/data/.openclaw/agents/${agentId}`] : []),
       ];
 
       // agentDir is typically the inner /agent subdirectory
