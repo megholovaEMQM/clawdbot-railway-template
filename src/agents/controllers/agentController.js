@@ -436,6 +436,112 @@ export const updateAgentConfig = async (req, res) => {
 };
 
 /**
+ * PUT /api/agents/:agentId/config-files
+ * Upload/replace agent config files (AGENTS.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md,
+ * and optionally BOOTSTRAP.md and MEMORY.md) into the agent's workspace directory.
+ *
+ * Body: { files: { "AGENTS.md": "...", "IDENTITY.md": "...", ... } }
+ *
+ * Any subset of allowed files may be provided; only included files are written.
+ * Allowed files: AGENTS.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md, BOOTSTRAP.md, MEMORY.md
+ *
+ * The workspace is resolved from agent storage (user-created agents) or derived as
+ * /data/.openclaw/workspace-{agentId} (template/built-in agents).
+ */
+export const uploadConfigFiles = async (req, res) => {
+  const ALLOWED_FILES = new Set([
+    "AGENTS.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "USER.md",
+    "BOOTSTRAP.md", "MEMORY.md",
+  ]);
+
+  try {
+    const { agentId } = req.params;
+    const { files } = req.body;
+
+    logger.info("PUT /api/agents/:agentId/config-files - Upload config files", {
+      agentId,
+      fileKeys: files ? Object.keys(files) : [],
+    });
+
+    if (!files || typeof files !== "object" || Array.isArray(files)) {
+      return res.status(400).json({ error: "Request body must include a 'files' object" });
+    }
+
+    if (Object.keys(files).length === 0) {
+      return res.status(400).json({ error: "At least one file must be provided" });
+    }
+
+    // Validate no disallowed file names
+    const unknownFiles = Object.keys(files).filter((f) => !ALLOWED_FILES.has(f));
+    if (unknownFiles.length > 0) {
+      return res.status(400).json({
+        error: "Unknown file names provided",
+        unknownFiles,
+        allowedFiles: [...ALLOWED_FILES],
+      });
+    }
+
+    // Validate all file values are strings
+    const invalidFiles = Object.entries(files)
+      .filter(([, v]) => typeof v !== "string")
+      .map(([k]) => k);
+    if (invalidFiles.length > 0) {
+      return res.status(400).json({
+        error: "File contents must be strings",
+        invalidFiles,
+      });
+    }
+
+    // Resolve agent workspace — check storage first (user-created agents have custom paths),
+    // then check /data/.openclaw/agents/{agentId} for built-in/template agents.
+    const storedAgent = agentStorage.getAgent(agentId);
+    let workspaceDir = storedAgent?.workspace || null;
+
+    if (!workspaceDir) {
+      // Verify the agent exists as a built-in agent in openclaw
+      const agentDir = `/data/.openclaw/agents/${agentId}`;
+      try {
+        await fs.stat(agentDir);
+        workspaceDir = `/data/.openclaw/workspace-${agentId}`;
+      } catch {
+        logger.warn("Upload config files failed: agent not found", { agentId });
+        return res.status(404).json({ error: `Agent ${agentId} not found` });
+      }
+    }
+
+    // Ensure workspace directory exists
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    // Write each file to the workspace
+    const written = [];
+    for (const [fileName, content] of Object.entries(files)) {
+      const filePath = path.join(workspaceDir, fileName);
+      await fs.writeFile(filePath, content, "utf8");
+      written.push(fileName);
+      logger.debug("Config file written", { agentId, filePath });
+    }
+
+    logger.info("Agent config files uploaded successfully", {
+      agentId,
+      workspaceDir,
+      written,
+    });
+
+    return res.json({
+      success: true,
+      agentId,
+      workspaceDir,
+      written,
+    });
+  } catch (error) {
+    logger.error("Upload config files failed", error, {
+      agentId: req.params?.agentId,
+    });
+    return res.status(500).json({ error: error.message || "Failed to upload config files" });
+  }
+};
+
+/**
  * DELETE /api/agents/:agentId
  * Delete an agent
  * Template agents (those with a /templates/ subdirectory in their workspace) cannot be deleted.
