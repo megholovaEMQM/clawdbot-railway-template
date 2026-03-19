@@ -753,6 +753,124 @@ function buildOnboardArgs(payload) {
   return args;
 }
 
+/**
+ * Auto-setup: runs the full openclaw onboard + gateway config on first boot
+ * when OPENCLAW_AUTO_SETUP=true and the required env vars are present.
+ * The existing setup UI flow is left completely unchanged.
+ */
+async function runAutoSetup() {
+  const authChoice = process.env.OPENCLAW_AUTH_CHOICE?.trim();
+  const authSecret = process.env.OPENCLAW_AUTH_SECRET?.trim();
+
+  if (!authChoice || !authSecret) {
+    console.warn("[auto-setup] OPENCLAW_AUTH_CHOICE or OPENCLAW_AUTH_SECRET not set — skipping");
+    return;
+  }
+
+  console.log("[auto-setup] starting automated openclaw setup...");
+
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+
+  const payload = {
+    flow: process.env.OPENCLAW_FLOW?.trim() || "quickstart",
+    authChoice,
+    authSecret,
+    telegramToken: process.env.OPENCLAW_TELEGRAM_TOKEN?.trim() || "",
+    discordToken: process.env.OPENCLAW_DISCORD_TOKEN?.trim() || "",
+    slackBotToken: process.env.OPENCLAW_SLACK_BOT_TOKEN?.trim() || "",
+    slackAppToken: process.env.OPENCLAW_SLACK_APP_TOKEN?.trim() || "",
+  };
+
+  let onboardArgs;
+  try {
+    onboardArgs = buildOnboardArgs(payload);
+  } catch (err) {
+    console.error(`[auto-setup] invalid onboard args: ${String(err)}`);
+    return;
+  }
+
+  const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
+  const ok = onboard.code === 0 && isConfigured();
+
+  if (!ok) {
+    console.error(`[auto-setup] onboard failed (exit ${onboard.code}):\n${onboard.output}`);
+    return;
+  }
+
+  console.log("[auto-setup] onboard complete — applying gateway config...");
+
+  // Gateway auth
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.mode", "token"]));
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.remote.token", OPENCLAW_GATEWAY_TOKEN]));
+
+  // Gateway network
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "lan"]));
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.trustedProxies", JSON.stringify(["*"])]));
+
+  const railwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  if (railwayPublicDomain) {
+    await runCmd(OPENCLAW_NODE, clawArgs([
+      "config", "set", "--json", "gateway.controlUi.allowedOrigins",
+      JSON.stringify([`https://${railwayPublicDomain}`]),
+    ]));
+  }
+
+  // Channels
+  const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
+  const helpText = channelsHelp.output || "";
+  const supports = (name) => helpText.includes(name);
+
+  if (payload.telegramToken) {
+    if (supports("telegram")) {
+      await runCmd(OPENCLAW_NODE, clawArgs([
+        "config", "set", "--json", "channels.telegram",
+        JSON.stringify({ enabled: true, dmPolicy: "pairing", botToken: payload.telegramToken, groupPolicy: "allowlist", streamMode: "partial" }),
+      ]));
+      await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", "telegram"]));
+      console.log("[auto-setup] telegram configured");
+    } else {
+      console.warn("[auto-setup] telegram not supported by this openclaw build — skipped");
+    }
+  }
+
+  if (payload.discordToken) {
+    if (supports("discord")) {
+      await runCmd(OPENCLAW_NODE, clawArgs([
+        "config", "set", "--json", "channels.discord",
+        JSON.stringify({ enabled: true, token: payload.discordToken, groupPolicy: "allowlist", dm: { policy: "pairing" } }),
+      ]));
+      console.log("[auto-setup] discord configured");
+    } else {
+      console.warn("[auto-setup] discord not supported by this openclaw build — skipped");
+    }
+  }
+
+  if (payload.slackBotToken || payload.slackAppToken) {
+    if (supports("slack")) {
+      const slackCfg = { enabled: true };
+      if (payload.slackBotToken) slackCfg.botToken = payload.slackBotToken;
+      if (payload.slackAppToken) slackCfg.appToken = payload.slackAppToken;
+      await runCmd(OPENCLAW_NODE, clawArgs([
+        "config", "set", "--json", "channels.slack", JSON.stringify(slackCfg),
+      ]));
+      console.log("[auto-setup] slack configured");
+    } else {
+      console.warn("[auto-setup] slack not supported by this openclaw build — skipped");
+    }
+  }
+
+  console.log("[auto-setup] setup complete — starting gateway...");
+  try {
+    await ensureGatewayRunning();
+    console.log("[auto-setup] gateway ready");
+  } catch (err) {
+    console.error(`[auto-setup] gateway failed to start: ${String(err)}`);
+  }
+}
+
 function runCmd(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const timeoutMs = Number.isFinite(opts.timeoutMs)
@@ -1811,6 +1929,11 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     } catch (err) {
       console.warn(`[wrapper] bootstrap failed (continuing): ${String(err)}`);
     }
+  }
+
+  // Auto-setup: run full onboard on first boot if env vars are present.
+  if (!isConfigured() && process.env.OPENCLAW_AUTO_SETUP === "true") {
+    await runAutoSetup();
   }
 
   // Sync gateway tokens in config with the current env var on every startup.
