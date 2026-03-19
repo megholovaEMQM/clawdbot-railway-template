@@ -108,6 +108,44 @@ export const getTemplateVars = async (req, res) => {
 };
 
 /**
+ * GET /api/agents/config
+ * Return the full openclaw.json config
+ */
+export const getConfig = async (_req, res) => {
+  try {
+    logger.info("GET /api/agents/config - Get openclaw.json");
+    const config = configManager.readConfig();
+    return res.json({ success: true, path: configManager.configPath, config });
+  } catch (error) {
+    logger.error("Get config failed", error);
+    return res.status(500).json({ error: error.message || "Failed to read config" });
+  }
+};
+
+/**
+ * PUT /api/agents/config
+ * Replace the full openclaw.json config
+ * Body: the config object
+ */
+export const updateConfig = async (req, res) => {
+  try {
+    logger.info("PUT /api/agents/config - Update openclaw.json");
+
+    const config = req.body;
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      return res.status(400).json({ error: "Request body must be a config object" });
+    }
+
+    configManager.writeConfig(config);
+    logger.info("openclaw.json updated successfully");
+    return res.json({ success: true, path: configManager.configPath, config });
+  } catch (error) {
+    logger.error("Update config failed", error);
+    return res.status(500).json({ error: error.message || "Failed to write config" });
+  }
+};
+
+/**
  * GET /api/agents/:agentId
  * Get agent details
  */

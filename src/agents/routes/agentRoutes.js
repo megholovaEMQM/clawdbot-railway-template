@@ -22,6 +22,9 @@ router.get("/", agentController.listAgents);
 /**
  * GET /api/agents/:agentId/vars - Get required template placeholder variables
  */
+router.get("/config", agentController.getConfig);
+router.put("/config", agentController.updateConfig);
+
 router.get("/:agentId/vars", agentController.getTemplateVars);
 
 /**
