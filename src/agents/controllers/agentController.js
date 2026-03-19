@@ -271,6 +271,54 @@ export const updateAgentConfig = async (req, res) => {
 };
 
 /**
+ * GET /api/agents/:agentId/config-files
+ * Return all config files from the agent's workspace directory.
+ */
+export const getConfigFiles = async (req, res) => {
+  const ALLOWED_FILES = [
+    "AGENTS.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "USER.md",
+    "BOOTSTRAP.md", "MEMORY.md",
+  ];
+
+  try {
+    const { agentId } = req.params;
+
+    logger.info("GET /api/agents/:agentId/config-files - Get config files", { agentId });
+
+    const storedAgent = agentStorage.getAgent(agentId);
+    let workspaceDir = storedAgent?.workspace || null;
+
+    if (!workspaceDir) {
+      const agentDir = `/data/.openclaw/agents/${agentId}`;
+      try {
+        await fs.stat(agentDir);
+        workspaceDir = `/data/.openclaw/workspace-${agentId}`;
+      } catch {
+        logger.warn("Get config files failed: agent not found", { agentId });
+        return res.status(404).json({ error: `Agent ${agentId} not found` });
+      }
+    }
+
+    const files = {};
+    for (const fileName of ALLOWED_FILES) {
+      const filePath = path.join(workspaceDir, fileName);
+      try {
+        files[fileName] = await fs.readFile(filePath, "utf8");
+      } catch {
+        // File doesn't exist — omit it from the response
+      }
+    }
+
+    logger.debug("Config files read", { agentId, files: Object.keys(files) });
+
+    return res.json({ success: true, agentId, workspaceDir, files });
+  } catch (error) {
+    logger.error("Get config files failed", error, { agentId: req.params?.agentId });
+    return res.status(500).json({ error: error.message || "Failed to get config files" });
+  }
+};
+
+/**
  * PUT /api/agents/:agentId/config-files
  * Upload/replace agent config files (AGENTS.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md,
  * and optionally BOOTSTRAP.md and MEMORY.md) into the agent's workspace directory.

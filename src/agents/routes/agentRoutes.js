@@ -36,6 +36,7 @@ router.get("/:agentId", agentController.getAgent);
  * Only the files included in the request are written; all others remain unchanged.
  * Allowed files: AGENTS.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md, BOOTSTRAP.md, MEMORY.md
  */
+router.get("/:agentId/config-files", agentController.getConfigFiles);
 router.put("/:agentId/config-files", agentController.uploadConfigFiles);
 
 /**
