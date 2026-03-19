@@ -868,7 +868,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       );
       await runCmd(
         OPENCLAW_NODE,
-        clawArgs(["config", "set", "gateway.bind", "loopback"]),
+        clawArgs(["config", "set", "gateway.bind", "lan"]),
       );
       await runCmd(
         OPENCLAW_NODE,
@@ -880,8 +880,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         ]),
       );
 
-      // Railway runs behind a reverse proxy. Trust loopback as a proxy hop so local client detection
-      // remains correct when X-Forwarded-* headers are present.
+      // Trust all proxies (Railway reverse proxy setup).
       await runCmd(
         OPENCLAW_NODE,
         clawArgs([
@@ -889,9 +888,24 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           "set",
           "--json",
           "gateway.trustedProxies",
-          JSON.stringify(["127.0.0.1"]),
+          JSON.stringify(["*"]),
         ]),
       );
+
+      // Set allowed origins for the Control UI using the Railway public domain.
+      const railwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+      if (railwayPublicDomain) {
+        await runCmd(
+          OPENCLAW_NODE,
+          clawArgs([
+            "config",
+            "set",
+            "--json",
+            "gateway.controlUi.allowedOrigins",
+            JSON.stringify([`https://${railwayPublicDomain}`]),
+          ]),
+        );
+      }
 
       // Optional: configure a custom OpenAI-compatible provider (base URL) for advanced users.
       if (
