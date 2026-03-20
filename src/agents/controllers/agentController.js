@@ -31,7 +31,7 @@ export const createAgent = async (req, res) => {
     await openclawService.createAgent(agentId, { workspace });
 
     const agentDir = `/data/.openclaw/agents/${agentId}/agent`;
-    configManager.updateAgentInConfig(agentId, { workspace, agentDir, name: agentName });
+    await configManager.updateAgentInConfig(agentId, { workspace, agentDir, name: agentName });
 
     const metadata = {
       id: agentId,
@@ -259,7 +259,7 @@ export const updateAgent = async (req, res) => {
         agentId,
         configUpdate,
       });
-      configManager.patchAgentConfig(agentId, configUpdate);
+      await configManager.patchAgentConfig(agentId, configUpdate);
     }
 
     logger.info("Agent updated successfully", { agentId });
@@ -307,7 +307,7 @@ export const updateAgentConfig = async (req, res) => {
     });
 
     // Merge into openclaw config
-    const updatedConfig = configManager.patchAgentConfig(
+    const updatedConfig = await configManager.patchAgentConfig(
       agentId,
       updatePayload,
     );
@@ -551,7 +551,7 @@ export const deleteAgent = async (req, res) => {
 
     // Remove from config
     logger.debug("Removing agent from OpenClaw config", { agentId });
-    configManager.removeAgentFromConfig(agentId);
+    await configManager.removeAgentFromConfig(agentId);
 
     // Remove from storage
     logger.debug("Removing agent from storage", { agentId });
