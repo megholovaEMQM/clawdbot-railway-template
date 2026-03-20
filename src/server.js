@@ -893,6 +893,13 @@ async function runAutoSetup() {
     }
   }
 
+  // Set default model if specified
+  const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL?.trim();
+  if (defaultModel) {
+    await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "agents.defaults.model", defaultModel]));
+    console.log(`[auto-setup] default model set to ${defaultModel}`);
+  }
+
   console.log("[auto-setup] setup complete — starting gateway...");
   try {
     await ensureGatewayRunning();
