@@ -2,6 +2,8 @@ import { execSync } from "child_process";
 import { exec } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import fs from "fs";
+import os from "os";
 import logger from "./logger.js";
 
 const execAsync = promisify(exec);
@@ -244,6 +246,64 @@ class OpenClawService {
       logger.warn("OpenClaw not found in PATH");
       return false;
     }
+  }
+
+  /**
+   * Validate an openclaw.json config object before writing.
+   * Writes to a temp file and runs `openclaw config validate` against it.
+   * @param {object} config - Config object to validate
+   * @returns {Promise<{ valid: boolean, error: string|null }>}
+   */
+  async validateConfig(config) {
+    const tmpPath = path.join(os.tmpdir(), `openclaw-validate-${process.pid}-${Date.now()}.json`);
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), "utf8");
+      const command = `openclaw config validate`;
+      logger.command(command, { tmpPath });
+      await execAsync(command, {
+        env: { ...process.env, OPENCLAW_CONFIG_PATH: tmpPath },
+      });
+      return { valid: true, error: null };
+    } catch (error) {
+      const message = (error.stderr || error.stdout || error.message || "").trim();
+      logger.warn("Config validation failed", { message });
+      return { valid: false, error: message };
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch {}
+    }
+  }
+
+  /**
+   * Check gateway health.
+   * @returns {Promise<{ healthy: boolean, details: string }>}
+   */
+  async gatewayHealth() {
+    try {
+      const command = `openclaw gateway health`;
+      logger.command(command);
+      const { stdout, stderr } = await execAsync(command);
+      const details = (stdout || stderr || "").trim();
+      return { healthy: true, details };
+    } catch (error) {
+      const details = (error.stderr || error.stdout || error.message || "").trim();
+      logger.warn("Gateway health check failed", { details });
+      return { healthy: false, details };
+    }
+  }
+
+  /**
+   * Poll gateway health until it responds healthy or max attempts are exhausted.
+   * @param {number} attempts - Number of attempts (default 4)
+   * @param {number} intervalMs - Delay between attempts in ms (default 1500)
+   * @returns {Promise<{ healthy: boolean, details: string }>}
+   */
+  async pollGatewayHealth(attempts = 4, intervalMs = 1500) {
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+      const result = await this.gatewayHealth();
+      if (result.healthy) return result;
+    }
+    return { healthy: false, details: "Gateway did not recover after config update" };
   }
 
   /**

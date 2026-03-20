@@ -136,9 +136,38 @@ export const updateConfig = async (req, res) => {
       return res.status(400).json({ error: "Request body must be a config object" });
     }
 
+    // Validate before writing
+    const validation = await openclawService.validateConfig(config);
+    if (!validation.valid) {
+      logger.warn("Config validation failed — write aborted", { error: validation.error });
+      return res.status(400).json({
+        error: "Invalid config — openclaw.json not updated",
+        details: validation.error,
+      });
+    }
+
     configManager.writeConfig(config);
     logger.info("openclaw.json updated successfully");
-    return res.json({ success: true, path: configManager.configPath, config });
+
+    // Poll gateway health to confirm it absorbed the change cleanly
+    const health = await openclawService.pollGatewayHealth();
+    if (!health.healthy) {
+      logger.warn("Gateway unhealthy after config update", { details: health.details });
+      return res.status(207).json({
+        success: true,
+        warning: "Config written but gateway is not healthy — it may have rejected the new config",
+        gatewayDetails: health.details,
+        path: configManager.configPath,
+        config,
+      });
+    }
+
+    return res.json({
+      success: true,
+      path: configManager.configPath,
+      config,
+      gateway: { healthy: true, details: health.details },
+    });
   } catch (error) {
     logger.error("Update config failed", error);
     return res.status(500).json({ error: error.message || "Failed to write config" });
