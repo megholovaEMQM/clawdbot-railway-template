@@ -213,7 +213,7 @@ function validateConfigChange(prevConfig, newConfig) {
 
   // 7. Model format — must be "provider/modelId"
   const modelsToCheck = [];
-  if (newConfig.agents?.defaults?.model) {
+  if (newConfig.agents?.defaults?.model && typeof newConfig.agents.defaults.model === "string") {
     modelsToCheck.push({ path: "agents.defaults.model", value: newConfig.agents.defaults.model });
   }
   for (const agent of newAgents) {
