@@ -900,6 +900,10 @@ async function runAutoSetup() {
     console.log(`[auto-setup] default model set to ${defaultModel}`);
   }
 
+  // Enable session tools visibility for all agents
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "tools.sessions.visibility", "all"]));
+  console.log("[auto-setup] tools.sessions.visibility set to all");
+
   console.log("[auto-setup] setup complete — starting gateway...");
   try {
     await ensureGatewayRunning();
