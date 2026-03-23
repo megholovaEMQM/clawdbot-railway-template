@@ -1801,7 +1801,7 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
 // --- Agent Management API Routes (MUST come before any catch-all middleware) ---
 // Completely isolated from gateway proxy - registered at app root
 const JWT_SECRET = process.env.JWT_SECRET || "abcd1234";
-setupApiRoutes(app, JWT_SECRET);
+setupApiRoutes(app, JWT_SECRET, restartGateway);
 
 // Proxy everything else to the gateway.
 const proxy = httpProxy.createProxyServer({

@@ -6,9 +6,8 @@
 import agentRoutes from "./agents/routes/agentRoutes.js";
 import { authMiddleware } from "./agents/middleware/auth.js";
 import logger from "./agents/utils/logger.js";
-import openclawService from "./agents/utils/openclawService.js";
 
-export function setupApiRoutes(app, jwtSecret) {
+export function setupApiRoutes(app, jwtSecret, restartGateway) {
   // --- Agent Management API Routes ---
   // These are COMPLETELY ISOLATED and do NOT pass through gateway proxy
   // Registered FIRST before any catch-all middleware
@@ -30,11 +29,8 @@ export function setupApiRoutes(app, jwtSecret) {
   app.post("/api/gateway/restart", authMiddleware(jwtSecret), async (_req, res) => {
     try {
       logger.info("POST /api/gateway/restart");
-      const result = await openclawService.restartGateway();
-      if (!result.success) {
-        return res.status(500).json({ error: "Gateway restart failed", details: result.details });
-      }
-      return res.json({ success: true, details: result.details });
+      await restartGateway();
+      return res.json({ success: true });
     } catch (error) {
       logger.error("Gateway restart endpoint failed", error);
       return res.status(500).json({ error: error.message || "Failed to restart gateway" });
