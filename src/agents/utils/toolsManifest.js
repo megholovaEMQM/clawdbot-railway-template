@@ -9,7 +9,7 @@ const MANIFEST_PATH = path.join(
 
 /**
  * Read the tools manifest from disk.
- * Returns { tools: [{ agentId: string|null, name, description, parameters }] }
+ * Returns { tools: [{ name, description, parameters }] }
  */
 function readManifest() {
   try {
