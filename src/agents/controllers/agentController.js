@@ -1,6 +1,5 @@
 import openclawService from "../utils/openclawService.js";
 import configManager from "../utils/configManager.js";
-import agentStorage from "../utils/agentStorage.js";
 import logger from "../utils/logger.js";
 import { promises as fs } from "fs";
 import path from "path";
@@ -9,6 +8,14 @@ import path from "path";
  * Agent Controller
  * Handles all agent-related API requests
  */
+
+/**
+ * Returns the agent's entry from openclaw.json agents.list, or null if not found.
+ */
+function getAgentConfigEntry(agentId) {
+  const config = configManager.readConfig();
+  return config.agents?.list?.find((a) => a.id === agentId) ?? null;
+}
 
 /**
  * POST /api/agents
@@ -43,19 +50,9 @@ export const createAgent = async (req, res) => {
       name: agentName,
     });
 
-    const metadata = {
-      id: agentId,
-      name: agentName,
-      workspace,
-      agentDir,
-      createdAt: new Date().toISOString(),
-      status: "created",
-    };
-    const savedAgent = agentStorage.saveAgent(agentId, metadata);
-
     logger.info("Agent created successfully", { agentId });
 
-    return res.status(201).json({ success: true, agentId, agent: savedAgent });
+    return res.status(201).json({ success: true, agentId });
   } catch (error) {
     logger.error("Create agent failed", error, { agentId: req.body?.agentId });
     return res
@@ -410,47 +407,39 @@ export const listAgents = async (req, res) => {
 
 /**
  * PATCH /api/agents/:agentId
- * Update agent metadata
+ * Update agent config fields (name, workspace, model)
  */
 export const updateAgent = async (req, res) => {
   try {
     const { agentId } = req.params;
     const updates = req.body;
 
-    logger.info("PATCH /api/agents/:agentId - Update agent metadata", {
+    logger.info("PATCH /api/agents/:agentId - Update agent", {
       agentId,
       updates,
     });
 
-    // Verify agent exists
-    const existingAgent = agentStorage.getAgent(agentId);
-    if (!existingAgent) {
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
       logger.warn("Update agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
-    // Update storage
-    logger.debug("Updating agent in storage", { agentId });
-    const updatedAgent = agentStorage.updateAgent(agentId, updates);
+    const configUpdate = {};
+    if (updates.name) configUpdate.name = updates.name;
+    if (updates.workspace) configUpdate.workspace = updates.workspace;
+    if (updates.model) configUpdate.model = updates.model;
 
-    // Also update in openclaw config if name/workspace/model changed
-    if (updates.name || updates.workspace || updates.model) {
-      const configUpdate = {};
-      if (updates.name) configUpdate.name = updates.name;
-      if (updates.workspace) configUpdate.workspace = updates.workspace;
-      if (updates.model) configUpdate.model = updates.model;
-
-      logger.info("Updating agent config in OpenClaw", {
-        agentId,
-        configUpdate,
-      });
+    if (Object.keys(configUpdate).length > 0) {
+      logger.info("Updating agent config in OpenClaw", { agentId, configUpdate });
       await configManager.patchAgentConfig(agentId, configUpdate);
     }
 
     logger.info("Agent updated successfully", { agentId });
     res.json({
       success: true,
-      agent: updatedAgent,
+      agentId,
+      updated: Object.keys(configUpdate),
     });
   } catch (error) {
     logger.error("Update agent failed", error, {
@@ -475,14 +464,12 @@ export const updateAgentConfig = async (req, res) => {
       configKeys: Object.keys(configUpdate),
     });
 
-    // Verify agent exists in storage
-    const existingAgent = agentStorage.getAgent(agentId);
-    if (!existingAgent) {
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
       logger.warn("Update agent config failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
-    // Parse the update
     // Support both { configUpdate: {...} } and direct properties
     let updatePayload = req.body.configUpdate || req.body;
 
@@ -496,15 +483,6 @@ export const updateAgentConfig = async (req, res) => {
       agentId,
       updatePayload,
     );
-
-    // Update storage metadata to reflect custom config
-    if (updatePayload.model) {
-      logger.debug("Updating agent model in storage", {
-        agentId,
-        model: updatePayload.model,
-      });
-      agentStorage.updateAgent(agentId, { model: updatePayload.model });
-    }
 
     logger.info("Agent config updated successfully", { agentId });
     res.json({
@@ -545,19 +523,13 @@ export const getConfigFiles = async (req, res) => {
       agentId,
     });
 
-    const storedAgent = agentStorage.getAgent(agentId);
-    let workspaceDir = storedAgent?.workspace || null;
-
-    if (!workspaceDir) {
-      const agentDir = `/data/.openclaw/agents/${agentId}`;
-      try {
-        await fs.stat(agentDir);
-        workspaceDir = `/data/.openclaw/workspace-${agentId}`;
-      } catch {
-        logger.warn("Get config files failed: agent not found", { agentId });
-        return res.status(404).json({ error: `Agent ${agentId} not found` });
-      }
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
+      logger.warn("Get config files failed: agent not found", { agentId });
+      return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
+
+    const workspaceDir = entry.workspace || `/data/.openclaw/workspace-${agentId}`;
 
     const files = {};
     for (const fileName of ALLOWED_FILES) {
@@ -591,9 +563,6 @@ export const getConfigFiles = async (req, res) => {
  *
  * Any subset of allowed files may be provided; only included files are written.
  * Allowed files: AGENTS.md, IDENTITY.md, SOUL.md, TOOLS.md, USER.md, BOOTSTRAP.md, MEMORY.md
- *
- * The workspace is resolved from agent storage (user-created agents) or derived as
- * /data/.openclaw/workspace-{agentId} (template/built-in agents).
  */
 export const uploadConfigFiles = async (req, res) => {
   const ALLOWED_FILES = new Set([
@@ -651,22 +620,13 @@ export const uploadConfigFiles = async (req, res) => {
       });
     }
 
-    // Resolve agent workspace — check storage first (user-created agents have custom paths),
-    // then check /data/.openclaw/agents/{agentId} for built-in/template agents.
-    const storedAgent = agentStorage.getAgent(agentId);
-    let workspaceDir = storedAgent?.workspace || null;
-
-    if (!workspaceDir) {
-      // Verify the agent exists as a built-in agent in openclaw
-      const agentDir = `/data/.openclaw/agents/${agentId}`;
-      try {
-        await fs.stat(agentDir);
-        workspaceDir = `/data/.openclaw/workspace-${agentId}`;
-      } catch {
-        logger.warn("Upload config files failed: agent not found", { agentId });
-        return res.status(404).json({ error: `Agent ${agentId} not found` });
-      }
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
+      logger.warn("Upload config files failed: agent not found", { agentId });
+      return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
+
+    const workspaceDir = entry.workspace || `/data/.openclaw/workspace-${agentId}`;
 
     // Ensure workspace directory exists
     await fs.mkdir(workspaceDir, { recursive: true });
@@ -808,25 +768,18 @@ export const batchUpdateConfigFiles = async (req, res) => {
         continue;
       }
 
-      // Resolve workspace
-      const storedAgent = agentStorage.getAgent(agentId);
-      let workspaceDir = storedAgent?.workspace || null;
-
-      if (!workspaceDir) {
-        const agentDir = `/data/.openclaw/agents/${agentId}`;
-        try {
-          await fs.stat(agentDir);
-          workspaceDir = `/data/.openclaw/workspace-${agentId}`;
-        } catch {
-          results.push({
-            agentId,
-            success: false,
-            error: `Agent ${agentId} not found`,
-          });
-          anyFailed = true;
-          continue;
-        }
+      const configEntry = getAgentConfigEntry(agentId);
+      if (!configEntry) {
+        results.push({
+          agentId,
+          success: false,
+          error: `Agent ${agentId} not found`,
+        });
+        anyFailed = true;
+        continue;
       }
+
+      const workspaceDir = configEntry.workspace || `/data/.openclaw/workspace-${agentId}`;
 
       // Write files
       try {
@@ -905,9 +858,8 @@ export const deleteAgent = async (req, res) => {
 
     logger.info("DELETE /api/agents/:agentId - Delete agent", { agentId });
 
-    // Verify agent exists
-    const existingAgent = agentStorage.getAgent(agentId);
-    if (!existingAgent) {
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
       logger.warn("Delete agent failed: agent not found", { agentId });
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
@@ -951,20 +903,16 @@ export const deleteAgent = async (req, res) => {
       });
     }
 
-    // Delete from openclaw (pass stored paths so the correct workspace is removed)
+    // Delete from openclaw (pass paths from config entry so the correct workspace is removed)
     logger.info("Deleting agent from OpenClaw", { agentId });
     await openclawService.deleteAgent(agentId, {
-      workspace: existingAgent.workspace,
-      agentDir: existingAgent.agentDir,
+      workspace: entry.workspace,
+      agentDir: entry.agentDir,
     });
 
     // Remove from config
     logger.debug("Removing agent from OpenClaw config", { agentId });
     await configManager.removeAgentFromConfig(agentId);
-
-    // Remove from storage
-    logger.debug("Removing agent from storage", { agentId });
-    agentStorage.deleteAgent(agentId);
 
     logger.info("Agent deleted successfully", { agentId });
     res.json({
@@ -993,8 +941,8 @@ export const resetAgentSession = async (req, res) => {
       { agentId },
     );
 
-    const agent = agentStorage.getAgent(agentId);
-    if (!agent) {
+    const entry = getAgentConfigEntry(agentId);
+    if (!entry) {
       return res.status(404).json({ error: `Agent ${agentId} not found` });
     }
 
