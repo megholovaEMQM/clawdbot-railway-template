@@ -33,6 +33,9 @@ export const createAgent = async (req, res) => {
     const workspace = `/data/.openclaw/workspace-${agentId}`;
     await openclawService.createAgent(agentId, { workspace });
 
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(path.join(workspace, "MEMORY.md"), "", "utf8");
+
     const agentDir = `/data/.openclaw/agents/${agentId}/agent`;
     await configManager.updateAgentInConfig(agentId, {
       workspace,
