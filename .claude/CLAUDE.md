@@ -22,7 +22,7 @@ Node.js wrapper that deploys openclaw on Railway with a built-in setup UI and ag
 - **Read access: orchestrator.** You may read orchestrator files for context but never modify them.
 
 ## Git
-- Remote: `git@emqm.github.com:megholovaEMQM/clawdbot-railway-template.git` (uses `emqm.github.com` SSH host)
+- Remote: `git@emqm.github.com:emqm-group/clawdbot-railway-template.git` (uses `emqm.github.com` SSH host)
 - **Never push without explicit approval** — always show the diff/summary and wait for the user to say "push". "Go ahead", "yes", or approval of any other action does NOT count as push approval. Ask "shall I push?" separately after every commit and wait for a standalone response.
 - **Never commit without asking which branch first** — do not assume the current branch is correct
 - **Always `git pull` before committing** — check for upstream changes to avoid conflicts
