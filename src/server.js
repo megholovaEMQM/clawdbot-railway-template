@@ -2044,6 +2044,21 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     }
   }
 
+  // Ensure the third-party-tools plugin is installed and enabled on every startup.
+  // install --link + enable are idempotent, so this is safe to run repeatedly.
+  // Running it here (not just in runAutoSetup) ensures instances provisioned before
+  // the plugin was added to this image pick it up automatically on their next redeploy.
+  if (isConfigured()) {
+    const thirdPartyPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "third-party-tools");
+    try {
+      await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "install", "--link", thirdPartyPluginPath]));
+      await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", "third-party-tools"]));
+      console.log("[wrapper] third-party-tools plugin ensured active");
+    } catch (err) {
+      console.warn(`[wrapper] failed to ensure third-party-tools plugin: ${String(err)}`);
+    }
+  }
+
   // Auto-start the gateway if already configured so polling channels (Telegram/Discord/etc.)
   // work even if nobody visits the web UI.
   if (isConfigured()) {

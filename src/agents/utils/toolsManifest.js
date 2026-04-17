@@ -34,20 +34,30 @@ function writeManifest(manifest) {
 /**
  * Add or remove tools from the manifest.
  * @param {"add"|"remove"} action
+ * @param {string} agentId - agent that owns these tools
  * @param {object[]} tools - array of { name, description, parameters }
  */
-export function applyToolsUpdate(action, tools) {
+export function applyToolsUpdate(action, agentId, tools) {
   const manifest = readManifest();
 
   if (action === "add") {
     for (const tool of tools) {
-      // Remove existing entry for same name before re-adding
-      manifest.tools = manifest.tools.filter((t) => t.name !== tool.name);
-      manifest.tools.push({ name: tool.name, description: tool.description, parameters: tool.parameters });
+      // Remove existing entry for same (agentId, name) pair before re-adding
+      manifest.tools = manifest.tools.filter(
+        (t) => !(t.agentId === agentId && t.name === tool.name)
+      );
+      manifest.tools.push({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        agentId,
+      });
     }
   } else if (action === "remove") {
     const names = new Set(tools.map((t) => t.name));
-    manifest.tools = manifest.tools.filter((t) => !names.has(t.name));
+    manifest.tools = manifest.tools.filter(
+      (t) => !(t.agentId === agentId && names.has(t.name))
+    );
   }
 
   writeManifest(manifest);

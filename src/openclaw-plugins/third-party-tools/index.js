@@ -22,15 +22,14 @@ export default function (api) {
   const { tools } = readManifest();
 
   for (const entry of tools) {
-    const { name, description, parameters } = entry;
+    const { name, description, parameters, agentId } = entry;
 
     api.registerTool(
-      (ctx) => ({
+      {
         name,
         description,
         parameters,
         async execute(_toolCallId, params) {
-          const agentId = ctx.agentId;
           try {
             const res = await fetch(INVOKE_URL, {
               method: "POST",
@@ -55,7 +54,7 @@ export default function (api) {
             };
           }
         },
-      }),
+      },
       { optional: true }
     );
   }
