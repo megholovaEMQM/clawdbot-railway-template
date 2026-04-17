@@ -213,36 +213,100 @@ class ConfigManager {
   }
 
   /**
-   * Add or remove tool names from the global tools.allow list.
-   * This is required for optional plugin tools to be visible to agents —
-   * openclaw resolves optional tool availability against the global tools.allow,
-   * not the per-agent one.
+   * Add or remove tool names from the global tools.alsoAllow list.
+   * Plugin tools (registered via api.registerTool) must appear in the global
+   * tools.alsoAllow to be injected into agent sessions.  tools.allow would
+   * restrict built-in tools as well; alsoAllow is additive-only.
    * Serialised via mutex to prevent concurrent read-modify-write races.
    * @param {"add"|"remove"} action
    * @param {string[]} toolNames
    */
-  patchGlobalToolsAllow(action, toolNames) {
+  patchGlobalToolsAlsoAllow(action, toolNames) {
     return this._mutex.acquire(() => {
       const config = this.readConfig();
-      const currentAllow = config.tools?.allow ?? [];
+      const currentAlsoAllow = config.tools?.alsoAllow ?? [];
 
-      let newAllow;
+      let newAlsoAllow;
       if (action === "add") {
-        const toAdd = toolNames.filter((n) => !currentAllow.includes(n));
+        const toAdd = toolNames.filter((n) => !currentAlsoAllow.includes(n));
         if (toAdd.length === 0) return;
-        newAllow = [...currentAllow, ...toAdd];
+        newAlsoAllow = [...currentAlsoAllow, ...toAdd];
       } else {
         const toRemove = new Set(toolNames);
-        newAllow = currentAllow.filter((n) => !toRemove.has(n));
-        if (newAllow.length === currentAllow.length) return;
+        newAlsoAllow = currentAlsoAllow.filter((n) => !toRemove.has(n));
+        if (newAlsoAllow.length === currentAlsoAllow.length) return;
       }
 
       const updated = {
         ...config,
-        tools: { ...(config.tools ?? {}), allow: newAllow },
+        tools: { ...(config.tools ?? {}), alsoAllow: newAlsoAllow },
       };
       this.writeConfig(updated);
-      logger.info("ConfigManager: patched global tools.allow", { action, toolNames });
+      logger.info("ConfigManager: patched global tools.alsoAllow", { action, toolNames });
+    });
+  }
+
+  /**
+   * Write the third-party-tools plugin config block into openclaw.json.
+   * This replaces the CLI-based `plugins install --link` + `plugins enable` approach
+   * with a direct config write, which is idempotent and does not require openclaw
+   * CLI commands to succeed at startup.
+   * Serialised via mutex to prevent concurrent read-modify-write races.
+   * @param {string} pluginPath - Absolute path to the plugin directory
+   */
+  ensureThirdPartyToolsPlugin(pluginPath) {
+    return this._mutex.acquire(() => {
+      const config = this.readConfig();
+
+      const pluginsSection = config.plugins ?? {};
+
+      // plugins.allow — security gate; must include the plugin ID
+      const currentAllow = pluginsSection.allow ?? [];
+      const allow = currentAllow.includes("third-party-tools")
+        ? currentAllow
+        : [...currentAllow, "third-party-tools"];
+
+      // plugins.load.paths — discovery path for the plugin
+      const currentPaths = pluginsSection.load?.paths ?? [];
+      const paths = currentPaths.includes(pluginPath)
+        ? currentPaths
+        : [...currentPaths, pluginPath];
+
+      // plugins.entries — per-plugin enabled flag
+      const entries = {
+        ...(pluginsSection.entries ?? {}),
+        "third-party-tools": {
+          ...(pluginsSection.entries?.["third-party-tools"] ?? {}),
+          enabled: true,
+        },
+      };
+
+      // plugins.installs — install record (idempotent: keep existing installedAt)
+      const existingInstall = pluginsSection.installs?.["third-party-tools"] ?? {};
+      const installs = {
+        ...(pluginsSection.installs ?? {}),
+        "third-party-tools": {
+          source: "path",
+          sourcePath: pluginPath,
+          installPath: pluginPath,
+          version: "1.0.0",
+          installedAt: existingInstall.installedAt ?? new Date().toISOString(),
+        },
+      };
+
+      const updated = {
+        ...config,
+        plugins: {
+          ...pluginsSection,
+          allow,
+          load: { ...(pluginsSection.load ?? {}), paths },
+          entries,
+          installs,
+        },
+      };
+
+      this.writeConfig(updated);
+      logger.info("ConfigManager: ensured third-party-tools plugin config", { pluginPath });
     });
   }
 

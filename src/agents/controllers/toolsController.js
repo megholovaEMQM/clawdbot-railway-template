@@ -67,13 +67,13 @@ export async function register(req, res, restartGateway) {
   // Patch the agent's tools.allow in openclaw.json before restarting the gateway.
   await applyAgentToolsAllow(action, agent_id, tools);
 
-  // Also update the global tools.allow — openclaw resolves optional plugin tool
-  // visibility against the global list, not the per-agent one.
+  // Also update the global tools.alsoAllow — plugin tools must appear here to be
+  // injected into agent sessions. alsoAllow is additive and does not restrict built-in tools.
   const toolNames = tools.map((t) => t.name);
   try {
-    await configManager.patchGlobalToolsAllow(action, toolNames);
+    await configManager.patchGlobalToolsAlsoAllow(action, toolNames);
   } catch (err) {
-    logger.error("toolsController.register: failed to patch global tools.allow", { error: err.message });
+    logger.error("toolsController.register: failed to patch global tools.alsoAllow", { error: err.message });
   }
 
   // Respond immediately — gateway restart is async

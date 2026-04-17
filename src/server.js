@@ -13,6 +13,7 @@ import * as tar from "tar";
 // API route setup
 import setupApiRoutes from "./api.js";
 import logger from "./agents/utils/logger.js";
+import configManager from "./agents/utils/configManager.js";
 
 // Migrate deprecated CLAWDBOT_* env vars → OPENCLAW_* so existing Railway deployments
 // keep working. Users should update their Railway Variables to use the new names.
@@ -928,11 +929,12 @@ async function runAutoSetup() {
   await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "tools.sessions.visibility", "all"]));
   console.log("[auto-setup] tools.sessions.visibility set to all");
 
-  // Register third-party-tools plugin
+  // Write the third-party-tools plugin config block directly into openclaw.json.
+  // This replaces CLI-based install --link + enable calls, which were unreliable
+  // at first boot (CLI depends on openclaw being fully initialised).
   const thirdPartyPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "third-party-tools");
-  await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "install", "--link", thirdPartyPluginPath]));
-  await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", "third-party-tools"]));
-  console.log("[auto-setup] third-party-tools plugin registered and enabled");
+  await configManager.ensureThirdPartyToolsPlugin(thirdPartyPluginPath);
+  console.log("[auto-setup] third-party-tools plugin config written");
 
   console.log("[auto-setup] setup complete — starting gateway...");
   try {
@@ -2044,22 +2046,17 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     }
   }
 
-  // Ensure the third-party-tools plugin is installed and enabled on every startup.
-  // install --link + enable are idempotent, so this is safe to run repeatedly.
+  // Ensure the third-party-tools plugin config is written on every startup.
+  // Direct config write is idempotent and works even before the gateway starts.
   // Running it here (not just in runAutoSetup) ensures instances provisioned before
   // the plugin was added to this image pick it up automatically on their next redeploy.
   if (isConfigured()) {
     const thirdPartyPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "third-party-tools");
-    const installResult = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "install", "--link", thirdPartyPluginPath]));
-    if (installResult.code !== 0) {
-      console.warn(`[wrapper] plugins install --link failed (exit ${installResult.code}):\n${installResult.output}`);
-    } else {
-      const enableResult = await runCmd(OPENCLAW_NODE, clawArgs(["plugins", "enable", "third-party-tools"]));
-      if (enableResult.code !== 0) {
-        console.warn(`[wrapper] plugins enable third-party-tools failed (exit ${enableResult.code}):\n${enableResult.output}`);
-      } else {
-        console.log("[wrapper] third-party-tools plugin ensured active");
-      }
+    try {
+      await configManager.ensureThirdPartyToolsPlugin(thirdPartyPluginPath);
+      console.log("[wrapper] third-party-tools plugin config ensured");
+    } catch (err) {
+      console.warn(`[wrapper] failed to write third-party-tools plugin config: ${err.message}`);
     }
   }
 
