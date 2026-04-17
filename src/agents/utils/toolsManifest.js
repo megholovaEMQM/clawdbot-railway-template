@@ -42,10 +42,11 @@ export function applyToolsUpdate(action, agentId, tools) {
 
   if (action === "add") {
     for (const tool of tools) {
-      // Remove existing entry for same (agentId, name) pair before re-adding
-      manifest.tools = manifest.tools.filter(
-        (t) => !(t.agentId === agentId && t.name === tool.name)
-      );
+      // Remove ALL existing entries with the same name regardless of agentId.
+      // Openclaw can only register one handler per tool name, so the latest
+      // registration always wins. This also cleans up legacy entries written
+      // before agentId was added to the manifest format.
+      manifest.tools = manifest.tools.filter((t) => t.name !== tool.name);
       manifest.tools.push({
         name: tool.name,
         description: tool.description,
@@ -55,6 +56,7 @@ export function applyToolsUpdate(action, agentId, tools) {
     }
   } else if (action === "remove") {
     const names = new Set(tools.map((t) => t.name));
+    // Scope removal to this agent only to avoid clobbering another agent's entry.
     manifest.tools = manifest.tools.filter(
       (t) => !(t.agentId === agentId && names.has(t.name))
     );

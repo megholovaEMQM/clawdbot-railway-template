@@ -213,6 +213,40 @@ class ConfigManager {
   }
 
   /**
+   * Add or remove tool names from the global tools.allow list.
+   * This is required for optional plugin tools to be visible to agents —
+   * openclaw resolves optional tool availability against the global tools.allow,
+   * not the per-agent one.
+   * Serialised via mutex to prevent concurrent read-modify-write races.
+   * @param {"add"|"remove"} action
+   * @param {string[]} toolNames
+   */
+  patchGlobalToolsAllow(action, toolNames) {
+    return this._mutex.acquire(() => {
+      const config = this.readConfig();
+      const currentAllow = config.tools?.allow ?? [];
+
+      let newAllow;
+      if (action === "add") {
+        const toAdd = toolNames.filter((n) => !currentAllow.includes(n));
+        if (toAdd.length === 0) return;
+        newAllow = [...currentAllow, ...toAdd];
+      } else {
+        const toRemove = new Set(toolNames);
+        newAllow = currentAllow.filter((n) => !toRemove.has(n));
+        if (newAllow.length === currentAllow.length) return;
+      }
+
+      const updated = {
+        ...config,
+        tools: { ...(config.tools ?? {}), allow: newAllow },
+      };
+      this.writeConfig(updated);
+      logger.info("ConfigManager: patched global tools.allow", { action, toolNames });
+    });
+  }
+
+  /**
    * Add a binding to route messages to an agent.
    * Serialised via mutex to prevent concurrent read-modify-write races.
    * @param {string} agentId - Agent ID

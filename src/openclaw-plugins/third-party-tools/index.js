@@ -24,38 +24,35 @@ export default function (api) {
   for (const entry of tools) {
     const { name, description, parameters, agentId } = entry;
 
-    api.registerTool(
-      {
-        name,
-        description,
-        parameters,
-        async execute(_toolCallId, params) {
-          try {
-            const res = await fetch(INVOKE_URL, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ agent_id: agentId, tool: name, params }),
-            });
+    api.registerTool({
+      name,
+      description,
+      parameters,
+      async execute(_toolCallId, params) {
+        try {
+          const res = await fetch(INVOKE_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent_id: agentId, tool: name, params }),
+          });
 
-            const data = await res.json();
+          const data = await res.json();
 
-            if (!res.ok) {
-              return {
-                content: [{ type: "text", text: `Tool error [${data.code ?? res.status}]: ${data.message ?? JSON.stringify(data)}` }],
-              };
-            }
-
+          if (!res.ok) {
             return {
-              content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }],
-            };
-          } catch (err) {
-            return {
-              content: [{ type: "text", text: `Tool invocation failed: ${err.message}` }],
+              content: [{ type: "text", text: `Tool error [${data.code ?? res.status}]: ${data.message ?? JSON.stringify(data)}` }],
             };
           }
-        },
+
+          return {
+            content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `Tool invocation failed: ${err.message}` }],
+          };
+        }
       },
-      { optional: true }
-    );
+    });
   }
 }
