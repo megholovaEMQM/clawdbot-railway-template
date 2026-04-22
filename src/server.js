@@ -936,6 +936,11 @@ async function runAutoSetup() {
   await configManager.ensureThirdPartyToolsPlugin(thirdPartyPluginPath);
   console.log("[auto-setup] third-party-tools plugin config written");
 
+  const kingsCrossPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "king-cross-tools");
+  await configManager.ensureKingsCrossToolsPlugin(kingsCrossPluginPath);
+  await configManager.ensureKingsCrossToolsAlsoAllow();
+  console.log("[auto-setup] king-cross-tools plugin config written");
+
   console.log("[auto-setup] setup complete — starting gateway...");
   try {
     await ensureGatewayRunning();
@@ -1837,7 +1842,7 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
 // --- Agent Management API Routes (MUST come before any catch-all middleware) ---
 // Completely isolated from gateway proxy - registered at app root
 const JWT_SECRET = process.env.JWT_SECRET || "abcd1234";
-setupApiRoutes(app, JWT_SECRET, restartGateway);
+setupApiRoutes(app, JWT_SECRET, restartGateway, ensureGatewayRunning);
 
 // Proxy everything else to the gateway.
 const proxy = httpProxy.createProxyServer({
@@ -2046,10 +2051,10 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
     }
   }
 
-  // Ensure the third-party-tools plugin config is written on every startup.
-  // Direct config write is idempotent and works even before the gateway starts.
-  // Running it here (not just in runAutoSetup) ensures instances provisioned before
-  // the plugin was added to this image pick it up automatically on their next redeploy.
+  // Ensure plugin configs are written on every startup.
+  // Direct config writes are idempotent and work before the gateway starts.
+  // Running here (not just in runAutoSetup) ensures instances provisioned before
+  // a plugin was added to this image pick it up automatically on redeploy.
   if (isConfigured()) {
     const thirdPartyPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "third-party-tools");
     try {
@@ -2057,6 +2062,15 @@ const server = app.listen(PORT, "0.0.0.0", async () => {
       console.log("[wrapper] third-party-tools plugin config ensured");
     } catch (err) {
       console.warn(`[wrapper] failed to write third-party-tools plugin config: ${err.message}`);
+    }
+
+    const kingsCrossPluginPath = path.join(APP_ROOT, "src", "openclaw-plugins", "king-cross-tools");
+    try {
+      await configManager.ensureKingsCrossToolsPlugin(kingsCrossPluginPath);
+      await configManager.ensureKingsCrossToolsAlsoAllow();
+      console.log("[wrapper] king-cross-tools plugin config ensured");
+    } catch (err) {
+      console.warn(`[wrapper] failed to write king-cross-tools plugin config: ${err.message}`);
     }
   }
 

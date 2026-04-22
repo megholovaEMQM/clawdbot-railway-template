@@ -311,6 +311,85 @@ class ConfigManager {
   }
 
   /**
+   * Write the king-cross-tools plugin config block into openclaw.json.
+   * Mirrors ensureThirdPartyToolsPlugin — idempotent direct config write.
+   * Serialised via mutex to prevent concurrent read-modify-write races.
+   * @param {string} pluginPath - Absolute path to the plugin directory
+   */
+  ensureKingsCrossToolsPlugin(pluginPath) {
+    return this._mutex.acquire(() => {
+      const config = this.readConfig();
+
+      const pluginsSection = config.plugins ?? {};
+
+      // plugins.allow — security gate; must include the plugin ID
+      const currentAllow = pluginsSection.allow ?? [];
+      const allow = currentAllow.includes("king-cross-tools")
+        ? currentAllow
+        : [...currentAllow, "king-cross-tools"];
+
+      // plugins.load.paths — discovery path for the plugin
+      const currentPaths = pluginsSection.load?.paths ?? [];
+      const paths = currentPaths.includes(pluginPath)
+        ? currentPaths
+        : [...currentPaths, pluginPath];
+
+      // plugins.entries — per-plugin enabled flag
+      const entries = {
+        ...(pluginsSection.entries ?? {}),
+        "king-cross-tools": {
+          ...(pluginsSection.entries?.["king-cross-tools"] ?? {}),
+          enabled: true,
+        },
+      };
+
+      // plugins.installs — install record (idempotent: keep existing installedAt)
+      const existingInstall = pluginsSection.installs?.["king-cross-tools"] ?? {};
+      const installs = {
+        ...(pluginsSection.installs ?? {}),
+        "king-cross-tools": {
+          source: "path",
+          sourcePath: pluginPath,
+          installPath: pluginPath,
+          version: "1.0.0",
+          installedAt: existingInstall.installedAt ?? new Date().toISOString(),
+        },
+      };
+
+      const updated = {
+        ...config,
+        plugins: {
+          ...pluginsSection,
+          allow,
+          load: { ...(pluginsSection.load ?? {}), paths },
+          entries,
+          installs,
+        },
+      };
+
+      this.writeConfig(updated);
+      logger.info("ConfigManager: ensured king-cross-tools plugin config", { pluginPath });
+    });
+  }
+
+  /**
+   * Add the KC tool names to the global tools.alsoAllow list so agents can invoke them.
+   * Idempotent — skips names already present.
+   * Serialised via mutex to prevent concurrent read-modify-write races.
+   */
+  ensureKingsCrossToolsAlsoAllow() {
+    const KC_TOOLS = [
+      "kc_get_next_task",
+      "kc_get_task",
+      "kc_update_task",
+      "kc_create_task",
+      "kc_register_artifact",
+      "kc_delete_artifact",
+    ];
+    return this.patchGlobalToolsAlsoAllow("add", KC_TOOLS);
+  }
+
+  /**
    * Add a binding to route messages to an agent.
    * Serialised via mutex to prevent concurrent read-modify-write races.
    * @param {string} agentId - Agent ID

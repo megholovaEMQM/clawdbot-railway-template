@@ -7,11 +7,13 @@ import agentRoutes from "./agents/routes/agentRoutes.js";
 import fileRoutes from "./agents/routes/fileRoutes.js";
 import usageRoutes from "./agents/routes/usageRoutes.js";
 import { createToolsRouter } from "./agents/routes/toolsRoutes.js";
+import { createNotificationsRouter } from "./api/notifications.js";
+import { createTasksRouter } from "./api/tasks.js";
 import { authMiddleware } from "./agents/middleware/auth.js";
 import logger from "./agents/utils/logger.js";
 import openclawService from "./agents/utils/openclawService.js";
 
-export function setupApiRoutes(app, jwtSecret, restartGateway) {
+export function setupApiRoutes(app, jwtSecret, restartGateway, ensureGatewayRunning) {
   // --- Agent Management API Routes ---
   // These are COMPLETELY ISOLATED and do NOT pass through gateway proxy
   // Registered FIRST before any catch-all middleware
@@ -28,6 +30,14 @@ export function setupApiRoutes(app, jwtSecret, restartGateway) {
   app.use("/api/files", authMiddleware(jwtSecret), fileRoutes);
   app.use("/api/usage", authMiddleware(jwtSecret), usageRoutes);
   app.use("/api/tools", createToolsRouter(process.env.ORCHESTRATOR_SECRET?.trim(), restartGateway));
+
+  // KC notification receiver — called by orchestrator to push task events to agents.
+  // Uses the same JWT auth as all /api/* routes (jwtSecret = openclaw_jwt_secret).
+  app.use("/api/notifications", createNotificationsRouter(jwtSecret, ensureGatewayRunning));
+
+  // KC task proxy — loopback-only, called by king-cross-tools plugin inside gateway.
+  // Injects tenantId + ORCHESTRATOR_SECRET and forwards to /internal/tasks/*.
+  app.use("/api/tasks", createTasksRouter());
 
   /**
    * POST /api/devices/approve
