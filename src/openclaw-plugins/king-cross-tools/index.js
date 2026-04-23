@@ -46,13 +46,22 @@ export default function register(api) {
     async execute(_toolCallId, { agentId }) {
       try {
         const data = await callWrapper("GET", `/agent/${encodeURIComponent(agentId)}`);
-        let text = JSON.stringify(data);
+        let text;
         if (!data.task) {
-          text += "\n\nNo scheduled tasks remaining. Your loop is complete — stop and wait for the next notification.";
-        } else if (data.task.directive_filename) {
-          const workspace = `/data/.openclaw/workspace-${agentId}`;
-          const skillPath = `${workspace}/skills/${data.task.directive_filename}/SKILL.md`;
-          text += `\n\nSkill file for this task: ${skillPath} — this is a skill file that defines how to execute this task type. Read it and follow its instructions before proceeding.`;
+          text = "No scheduled tasks remaining. Your loop is complete — stop and wait for the next notification.";
+        } else {
+          const { id, task_description, task_type_name, directive_filename } = data.task;
+          const lines = [
+            `Task ID: ${id}`,
+            `Task type: ${task_type_name ?? "none"}`,
+            `Description: ${task_description}`,
+          ];
+          if (directive_filename) {
+            const workspace = `/data/.openclaw/workspace-${agentId}`;
+            const skillPath = `${workspace}/skills/${directive_filename}/SKILL.md`;
+            lines.push(`Skill file: ${skillPath} — this is a skill file that defines how to execute this task type. Read it and follow its instructions before proceeding.`);
+          }
+          text = lines.join("\n");
         }
         return {
           content: [{ type: "text", text }],
