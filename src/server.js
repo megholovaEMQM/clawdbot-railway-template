@@ -734,31 +734,20 @@ function buildOnboardArgs(payload) {
 
     const flag = map[payload.authChoice];
 
-    // Providers whose --*-api-key-ref-env counterpart is confirmed by openclaw docs.
-    // These store { source: "env", id: "OPENCLAW_AUTH_SECRET" } in openclaw.json
-    // instead of the plaintext key, so the value never leaves Railway env vars.
-    const refEnvMap = {
-      "openai-api-key": "--openai-api-key-ref-env",
-      apiKey:           "--anthropic-api-key-ref-env",
-      "gemini-api-key": "--gemini-api-key-ref-env",
-    };
-    const refEnvFlag = refEnvMap[payload.authChoice];
-
     // If the user picked an API-key auth choice but didn't provide a secret, fail fast.
     // Otherwise OpenClaw may fall back to its default auth choice, which looks like the
     // wizard "reverted" their selection.
-    if (flag && !secret) {
+    if (flag && !secret && !process.env.OPENCLAW_AUTH_SECRET) {
       throw new Error(
         `Missing auth secret for authChoice=${payload.authChoice}`,
       );
     }
 
     if (flag) {
-      if (refEnvFlag && process.env.OPENCLAW_AUTH_SECRET) {
-        // OPENCLAW_AUTH_SECRET is a Railway env var on this instance — store a SecretRef
-        // so the plaintext value is never written to openclaw.json.
-        // Falls back to plaintext for manual /setup UI deploys where the env var isn't set.
-        args.push("--secret-input-mode", "ref", refEnvFlag, "OPENCLAW_AUTH_SECRET");
+      if (process.env.OPENCLAW_AUTH_SECRET) {
+        // OPENCLAW_AUTH_SECRET is set as a Railway env var — store a SecretRef via
+        // --secret-input-mode ref so the plaintext key is never written to openclaw.json.
+        args.push("--secret-input-mode", "ref", flag, "OPENCLAW_AUTH_SECRET");
       } else {
         args.push(flag, secret);
       }
