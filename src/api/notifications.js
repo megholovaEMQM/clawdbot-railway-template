@@ -123,11 +123,17 @@ async function triggerAgent(agentId, message) {
   // Canonical per https://docs.openclaw.ai/gateway/openai-http-api — slash, not colon.
   // The "openclaw:<id>" alias is legacy and not honoured by all gateway versions.
   const model = `openclaw/${agentId}`;
+  // Pin to the agent's main session so task nudges land in the same transcript the
+  // agent uses with its human/channels. Default behaviour of /v1/chat/completions is
+  // stateless per request (new session each call) — overriding via x-openclaw-session-key.
+  // Key format per https://docs.openclaw.ai/reference/session-management-compaction.
+  const sessionKey = `agent:${agentId}:main`;
 
   const messagePreview = message.length > 120 ? `${message.slice(0, 120)}…` : message;
   logger.info(`[KC-NOTIF] triggerAgent → POST ${url}`, {
     agentId,
     model,
+    sessionKey,
     tokenPresent: Boolean(gatewayToken),
     messagePreview,
   });
@@ -138,6 +144,7 @@ async function triggerAgent(agentId, message) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${gatewayToken}`,
+      "x-openclaw-session-key": sessionKey,
     },
     body: JSON.stringify({
       model,
@@ -148,6 +155,7 @@ async function triggerAgent(agentId, message) {
   logger.info(`[KC-NOTIF] triggerAgent ← ${resp.status} in ${Date.now() - startedAt}ms`, {
     agentId,
     model,
+    sessionKey,
     ok: resp.ok,
   });
 
