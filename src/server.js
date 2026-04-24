@@ -911,6 +911,11 @@ async function runAutoSetup() {
   await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.http.endpoints.responses.enabled", "true"]));
   console.log("[auto-setup] gateway.http.endpoints.responses.enabled set to true");
 
+  // Enable /v1/chat/completions HTTP endpoint (required for KC task wake-up triggers
+  // — the notifications router POSTs here to nudge agents). Disabled by default per docs.
+  await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "gateway.http.endpoints.chatCompletions.enabled", "true"]));
+  console.log("[auto-setup] gateway.http.endpoints.chatCompletions.enabled set to true");
+
   // Enable session tools visibility for all agents
   await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "tools.sessions.visibility", "all"]));
   console.log("[auto-setup] tools.sessions.visibility set to all");
