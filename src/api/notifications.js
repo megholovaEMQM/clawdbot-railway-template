@@ -120,7 +120,9 @@ function buildMessage(event) {
 async function triggerAgent(agentId, message) {
   const gatewayToken = GATEWAY_TOKEN();
   const url = `http://127.0.0.1:${GATEWAY_PORT}/v1/chat/completions`;
-  const model = `openclaw:${agentId}`;
+  // Canonical per https://docs.openclaw.ai/gateway/openai-http-api — slash, not colon.
+  // The "openclaw:<id>" alias is legacy and not honoured by all gateway versions.
+  const model = `openclaw/${agentId}`;
 
   const messagePreview = message.length > 120 ? `${message.slice(0, 120)}…` : message;
   logger.info(`[KC-NOTIF] triggerAgent → POST ${url}`, {

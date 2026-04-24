@@ -183,7 +183,7 @@ Priority: specific peer → parent peer → Discord role+guild → guild → tea
 Each agent needs its own `agentDir` — **never share across agents**.
 
 ## Gateway HTTP APIs (all on same port, Bearer auth)
-- `POST /v1/chat/completions` — OpenAI-compatible; agent via `model: "openclaw:<agentId>"`
+- `POST /v1/chat/completions` — OpenAI-compatible; agent via `model: "openclaw/<agentId>"` (slash is canonical per docs; `openclaw:<agentId>` and `agent:<agentId>` are legacy aliases not honoured by all gateway versions). Also accepts header `x-openclaw-agent-id: <agentId>`; bare `"model": "openclaw"` routes to the default agent.
 - `POST /v1/responses` — OpenResponses API (must enable `gateway.http.endpoints.responses.enabled`)
 - `POST /tools/invoke` — direct tool invocation
 
