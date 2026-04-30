@@ -22,9 +22,12 @@ export default function (api) {
   const { tools } = readManifest();
 
   for (const entry of tools) {
-    const { name, description, parameters, agentId } = entry;
+    const { name, description, parameters } = entry;
 
-    api.registerTool({
+    // Factory form: openclaw resolves tools per-agent and passes that agent's
+    // ctx.agentId, so the closure captures the *calling* agent, not whoever
+    // registered the tool.
+    api.registerTool((ctx) => ({
       name,
       description,
       parameters,
@@ -33,7 +36,7 @@ export default function (api) {
           const res = await fetch(INVOKE_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ agent_id: agentId, tool: name, params }),
+            body: JSON.stringify({ agent_id: ctx.agentId, tool: name, params }),
           });
 
           const data = await res.json();
@@ -53,6 +56,6 @@ export default function (api) {
           };
         }
       },
-    });
+    }));
   }
 }

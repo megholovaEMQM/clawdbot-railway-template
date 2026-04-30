@@ -32,34 +32,29 @@ function writeManifest(manifest) {
 }
 
 /**
- * Add or remove tools from the manifest.
+ * Add tools to the manifest. Per-agent ownership lives in each agent's
+ * `tools.allow` (patched separately by toolsController); the plugin uses
+ * ctx.agentId at invocation time to identify the caller, so the manifest
+ * does not track agents.
+ *
+ * Remove is a no-op: per-agent allow-list removal happens elsewhere, and an
+ * orphaned manifest entry is harmless because no agent references it.
+ *
  * @param {"add"|"remove"} action
- * @param {string} agentId - agent that owns these tools
  * @param {object[]} tools - array of { name, description, parameters }
  */
-export function applyToolsUpdate(action, agentId, tools) {
+export function applyToolsUpdate(action, tools) {
+  if (action !== "add") return;
+
   const manifest = readManifest();
 
-  if (action === "add") {
-    for (const tool of tools) {
-      // Remove ALL existing entries with the same name regardless of agentId.
-      // Openclaw can only register one handler per tool name, so the latest
-      // registration always wins. This also cleans up legacy entries written
-      // before agentId was added to the manifest format.
-      manifest.tools = manifest.tools.filter((t) => t.name !== tool.name);
-      manifest.tools.push({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-        agentId,
-      });
-    }
-  } else if (action === "remove") {
-    const names = new Set(tools.map((t) => t.name));
-    // Scope removal to this agent only to avoid clobbering another agent's entry.
-    manifest.tools = manifest.tools.filter(
-      (t) => !(t.agentId === agentId && names.has(t.name))
-    );
+  for (const tool of tools) {
+    manifest.tools = manifest.tools.filter((t) => t.name !== tool.name);
+    manifest.tools.push({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    });
   }
 
   writeManifest(manifest);

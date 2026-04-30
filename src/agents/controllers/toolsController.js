@@ -58,7 +58,7 @@ export async function register(req, res, restartGateway) {
   }
 
   try {
-    applyToolsUpdate(action, agent_id, tools);
+    applyToolsUpdate(action, tools);
   } catch (err) {
     logger.error("toolsController.register: manifest update failed", { error: err.message });
     return res.status(500).json({ error: "Failed to update tools manifest" });
