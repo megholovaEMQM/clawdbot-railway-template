@@ -43,9 +43,14 @@ async function applyAgentToolsAllow(action, agentId, tools) {
  * POST /api/tools/register
  * Called by orchestrator to push tool definitions to this instance.
  * Auth: ORCHESTRATOR_SECRET bearer token.
+ *
+ * Body: { action, agent_id, tools, restart? }
+ *   - restart (default true): when false, applies the writes but skips the trailing
+ *     gateway restart. Caller is then responsible for issuing POST /api/gateway/restart
+ *     once after batching multiple per-agent registers — avoids overlapping restarts.
  */
 export async function register(req, res, restartGateway) {
-  const { action, agent_id, tools } = req.body;
+  const { action, agent_id, tools, restart } = req.body;
 
   if (!agent_id) {
     return res.status(400).json({ error: "agent_id is required" });
@@ -56,6 +61,10 @@ export async function register(req, res, restartGateway) {
   if (!Array.isArray(tools) || tools.length === 0) {
     return res.status(400).json({ error: "tools must be a non-empty array" });
   }
+  if (restart !== undefined && typeof restart !== "boolean") {
+    return res.status(400).json({ error: "restart must be a boolean" });
+  }
+  const shouldRestart = restart !== false;
 
   try {
     applyToolsUpdate(action, tools);
@@ -76,8 +85,16 @@ export async function register(req, res, restartGateway) {
     logger.error("toolsController.register: failed to patch global tools.alsoAllow", { error: err.message });
   }
 
-  // Respond immediately — gateway restart is async
   res.json({ ok: true });
+
+  if (!shouldRestart) {
+    logger.info("toolsController.register: writes applied, restart skipped (caller will batch)", {
+      action,
+      agentId: agent_id,
+      toolCount: tools.length,
+    });
+    return;
+  }
 
   try {
     await restartGateway();
