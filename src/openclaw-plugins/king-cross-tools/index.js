@@ -2,6 +2,10 @@
 // Registers the six KC tools as a fixed, named set — not dynamically from a manifest.
 // Each execute handler posts to the corresponding wrapper loopback endpoint,
 // which injects tenantId + ORCHESTRATOR_SECRET and forwards to the orchestrator.
+//
+// Factory form (`api.registerTool((ctx) => ...)`): openclaw resolves tools
+// per-agent and passes that agent's ctx.agentId, so the calling agent's ID is
+// sourced from the runtime — agents never pass their own ID as a tool parameter.
 
 const WRAPPER_PORT = process.env.PORT ?? process.env.OPENCLAW_PUBLIC_PORT ?? "3000";
 const BASE_URL = `http://127.0.0.1:${WRAPPER_PORT}/api/tasks`;
@@ -35,25 +39,23 @@ async function callWrapper(method, path, body) {
   return data;
 }
 
+function errorResult(message) {
+  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }] };
+}
+
 export default function register(api) {
-  // kc_get_next_task — returns the top scheduled task for an agent (or empty).
-  // agentId identifies whose queue to query; KC selects server-side.
-  api.registerTool({
+  // kc_get_next_task — returns the top scheduled task for the calling agent.
+  api.registerTool((ctx) => ({
     name: "kc_get_next_task",
     description:
-      "Fetch the next scheduled task assigned to this agent. Returns one task (highest priority, then earliest created_at), or an empty result if no scheduled tasks remain. Call this when triggered by a tasks_available or task_assigned notification, and after completing or failing a task to continue your loop — KC does not re-notify after completed or failed.",
+      "Fetch the next scheduled task assigned to this agent. Returns one task (highest priority, then earliest created_at), or {\"task\":null} if no scheduled tasks remain. Call this when triggered by a tasks_available or task_assigned notification, and after completing or failing a task to continue your loop — KC does not re-notify after completed or failed.",
     parameters: {
       type: "object",
-      required: ["agentId"],
       additionalProperties: false,
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Your own agent ID, as defined in IDENTITY.md.",
-        },
-      },
+      properties: {},
     },
-    async execute(_toolCallId, { agentId }) {
+    async execute() {
+      const agentId = ctx.agentId;
       log("kc_get_next_task", "called", { agentId });
       try {
         const data = await callWrapper("GET", `/agent/${encodeURIComponent(agentId)}`);
@@ -75,10 +77,10 @@ export default function register(api) {
         return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_get_next_task", err.message, { agentId });
-        return { content: [{ type: "text", text: JSON.stringify({ error: err.message }) }] };
+        return errorResult(err.message);
       }
     },
-  });
+  }));
 
   // kc_get_task — fetch a single task with its active artifacts.
   // Used on resumption after an approval_actioned notification to reconstruct full context.
@@ -104,7 +106,7 @@ export default function register(api) {
         const t = data.task;
         if (!t) {
           logError("kc_get_task", "no task in response", { taskId });
-          return { content: [{ type: "text", text: JSON.stringify({ error: `no task returned for taskId=${taskId}` }) }] };
+          return errorResult(`no task returned for taskId=${taskId}`);
         }
         const projected = {
           id: t.id,
@@ -133,7 +135,7 @@ export default function register(api) {
         return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_get_task", err.message, { taskId });
-        return { content: [{ type: "text", text: JSON.stringify({ error: err.message }) }] };
+        return errorResult(err.message);
       }
     },
   });
@@ -148,23 +150,19 @@ export default function register(api) {
   //     the user acts. Resume via the approval_actioned branch, not kc_get_next_task.
   //   After Phase 2 completes (approval_actioned → processing → completed): call
   //     kc_get_next_task to continue the loop — KC does not re-notify after completed.
-  api.registerTool({
+  api.registerTool((ctx) => ({
     name: "kc_update_task",
     description:
-      "Update your task's execution_status and/or agent_notes. You must be the assigned agent (agentId). " +
+      "Update your task's execution_status and/or agent_notes. You must be the assigned agent. " +
       "Valid status transitions: scheduled→processing, processing→awaiting_approval (only when approval_status=required or modify), processing→completed, processing→failed, received_approval→processing. " +
       "After completed or failed: call kc_get_next_task immediately to continue your loop — KC does not send another notification. " +
       "After awaiting_approval: stop your loop — KC will re-trigger you via tasks_available (for remaining scheduled tasks) or approval_actioned (when the user acts). " +
       "Provide at least one of execution_status or agent_notes.",
     parameters: {
       type: "object",
-      required: ["agentId", "taskId"],
+      required: ["taskId"],
       additionalProperties: false,
       properties: {
-        agentId: {
-          type: "string",
-          description: "Your own agent ID. Used for ownership validation.",
-        },
         taskId: {
           type: "string",
           description: "UUID of the task to update.",
@@ -186,41 +184,40 @@ export default function register(api) {
         },
       },
     },
-    async execute(_toolCallId, { agentId, taskId, execution_status, agent_notes }) {
+    async execute(_toolCallId, { taskId, execution_status, agent_notes }) {
+      const agentId = ctx.agentId;
       log("kc_update_task", "called", { agentId, taskId, execution_status: execution_status ?? null, has_agent_notes: agent_notes !== undefined });
       try {
         const body = { agentId };
         if (execution_status !== undefined) body.execution_status = execution_status;
         if (agent_notes !== undefined) body.agent_notes = agent_notes;
         const data = await callWrapper("PATCH", `/${encodeURIComponent(taskId)}`, body);
-        log("kc_update_task", "success", { agentId, taskId, execution_status: data.task?.execution_status, approval_status: data.task?.approval_status });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data) }],
+        const t = data.task ?? {};
+        const projected = {
+          id: t.id,
+          execution_status: t.execution_status,
+          approval_status: t.approval_status,
         };
+        log("kc_update_task", "success", { agentId, taskId, execution_status: projected.execution_status, approval_status: projected.approval_status });
+        return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_update_task", err.message, { agentId, taskId, execution_status: execution_status ?? null });
-        return {
-          content: [{ type: "text", text: `kc_update_task failed: ${err.message}` }],
-        };
+        return errorResult(err.message);
       }
     },
-  });
+  }));
 
   // kc_create_task — create a new task assigned to another agent (runtime delegation).
-  // agentId here is the creating agent (populates created_by_agent_id).
-  api.registerTool({
+  // The calling agent (ctx.agentId) is recorded as created_by_agent_id.
+  api.registerTool((ctx) => ({
     name: "kc_create_task",
     description:
-      "Create a new task assigned to another agent. Use this to delegate work at runtime. agentId is your own agent ID (creator); assignedToAgentId is the target agent; directiveFilename names the skill file in the target agent's workspace that defines how to execute the task. priority defaults to end-of-queue if omitted.",
+      "Create a new task assigned to another agent. Use this to delegate work at runtime. assignedToAgentId is the target agent; directiveFilename names the skill file in the target agent's workspace that defines how to execute the task. priority defaults to end-of-queue if omitted.",
     parameters: {
       type: "object",
-      required: ["agentId", "assignedToAgentId", "taskDescription", "directiveFilename"],
+      required: ["assignedToAgentId", "taskDescription", "directiveFilename"],
       additionalProperties: false,
       properties: {
-        agentId: {
-          type: "string",
-          description: "Your own agent ID (creator). Recorded as created_by_agent_id.",
-        },
         assignedToAgentId: {
           type: "string",
           description: "Agent ID of the agent this task is assigned to.",
@@ -249,7 +246,8 @@ export default function register(api) {
         },
       },
     },
-    async execute(_toolCallId, { agentId, assignedToAgentId, taskDescription, directiveFilename, additionalInfo, taskTypeId, priority }) {
+    async execute(_toolCallId, { assignedToAgentId, taskDescription, directiveFilename, additionalInfo, taskTypeId, priority }) {
+      const agentId = ctx.agentId;
       log("kc_create_task", "called", { agentId, assignedToAgentId, directiveFilename, taskTypeId: taskTypeId ?? null, priority: priority ?? null });
       try {
         const body = { agentId, assignedToAgentId, taskDescription, directiveFilename };
@@ -257,34 +255,28 @@ export default function register(api) {
         if (taskTypeId !== undefined) body.taskTypeId = taskTypeId;
         if (priority !== undefined) body.priority = priority;
         const data = await callWrapper("POST", "", body);
-        log("kc_create_task", "success", { agentId, assignedToAgentId, taskId: data.task?.id });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data) }],
-        };
+        const projected = { id: data.task?.id };
+        log("kc_create_task", "success", { agentId, assignedToAgentId, taskId: projected.id });
+        return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_create_task", err.message, { agentId, assignedToAgentId });
-        return {
-          content: [{ type: "text", text: `kc_create_task failed: ${err.message}` }],
-        };
+        return errorResult(err.message);
       }
     },
-  });
+  }));
 
   // kc_register_artifact — register an external artifact against a task before approval gate.
   // Must be called before transitioning to awaiting_approval so the artifact survives the async boundary.
-  api.registerTool({
+  // NOTE: not currently exercised by any skill — kept registered for future use.
+  api.registerTool((ctx) => ({
     name: "kc_register_artifact",
     description:
       "Store a reference to an external artifact (e.g. Gmail draft, Google Doc, CRM record) against your task. Call this before transitioning to awaiting_approval so the artifact ID is preserved across the async boundary. You must be the assigned agent.",
     parameters: {
       type: "object",
-      required: ["agentId", "taskId", "artifactType", "platform", "externalId"],
+      required: ["taskId", "artifactType", "platform", "externalId"],
       additionalProperties: false,
       properties: {
-        agentId: {
-          type: "string",
-          description: "Your own agent ID. Used for ownership validation.",
-        },
         taskId: {
           type: "string",
           description: "UUID of the task this artifact belongs to.",
@@ -306,11 +298,12 @@ export default function register(api) {
         metadata: {
           type: "object",
           description:
-            "Additional context: subject line, recipient, preview text, document title, etc.",
+            "Additional context: subject line, recipient, preview text, document title, etc. Used for approval-UI rendering only.",
         },
       },
     },
-    async execute(_toolCallId, { agentId, taskId, artifactType, platform, externalId, metadata }) {
+    async execute(_toolCallId, { taskId, artifactType, platform, externalId, metadata }) {
+      const agentId = ctx.agentId;
       log("kc_register_artifact", "called", { agentId, taskId, artifactType, platform, externalId });
       try {
         const body = { agentId, artifactType, platform, externalId };
@@ -320,34 +313,29 @@ export default function register(api) {
           `/${encodeURIComponent(taskId)}/artifacts`,
           body
         );
-        log("kc_register_artifact", "success", { agentId, taskId, artifactId: data.artifact?.id });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data) }],
-        };
+        const a = data.artifact ?? {};
+        const projected = { id: a.id, external_id: a.external_id };
+        log("kc_register_artifact", "success", { agentId, taskId, artifactId: projected.id });
+        return { content: [{ type: "text", text: JSON.stringify({ artifact: projected }) }] };
       } catch (err) {
         logError("kc_register_artifact", err.message, { agentId, taskId, artifactType, platform });
-        return {
-          content: [{ type: "text", text: `kc_register_artifact failed: ${err.message}` }],
-        };
+        return errorResult(err.message);
       }
     },
-  });
+  }));
 
   // kc_delete_artifact — soft-delete a superseded artifact (e.g. after revising a draft post-modify).
   // The old row is soft-deleted; register the replacement with kc_register_artifact.
-  api.registerTool({
+  // NOTE: not currently exercised by any skill — kept registered for future use.
+  api.registerTool((ctx) => ({
     name: "kc_delete_artifact",
     description:
       "Soft-delete a superseded artifact after a modify action (e.g. the old Gmail draft that was replaced with a revised version). You must be the assigned agent. After deleting, register the replacement with kc_register_artifact.",
     parameters: {
       type: "object",
-      required: ["agentId", "taskId", "artifactId"],
+      required: ["taskId", "artifactId"],
       additionalProperties: false,
       properties: {
-        agentId: {
-          type: "string",
-          description: "Your own agent ID. Used for ownership validation.",
-        },
         taskId: {
           type: "string",
           description: "UUID of the task this artifact belongs to.",
@@ -358,24 +346,21 @@ export default function register(api) {
         },
       },
     },
-    async execute(_toolCallId, { agentId, taskId, artifactId }) {
+    async execute(_toolCallId, { taskId, artifactId }) {
+      const agentId = ctx.agentId;
       log("kc_delete_artifact", "called", { agentId, taskId, artifactId });
       try {
-        const data = await callWrapper(
+        await callWrapper(
           "DELETE",
           `/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`,
           { agentId }
         );
         log("kc_delete_artifact", "success", { agentId, taskId, artifactId });
-        return {
-          content: [{ type: "text", text: JSON.stringify(data) }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
       } catch (err) {
         logError("kc_delete_artifact", err.message, { agentId, taskId, artifactId });
-        return {
-          content: [{ type: "text", text: `kc_delete_artifact failed: ${err.message}` }],
-        };
+        return errorResult(err.message);
       }
     },
-  });
+  }));
 }
