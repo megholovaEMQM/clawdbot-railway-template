@@ -57,36 +57,25 @@ export default function register(api) {
       log("kc_get_next_task", "called", { agentId });
       try {
         const data = await callWrapper("GET", `/agent/${encodeURIComponent(agentId)}`);
-        let text;
         if (!data.task) {
-          text = "No scheduled tasks remaining. Your loop is complete — stop and wait for the next notification.";
           log("kc_get_next_task", "no tasks in queue", { agentId });
-        } else {
-          const { id, task_description, task_type_name, directive_filename } = data.task;
-          log("kc_get_next_task", "task found", { agentId, taskId: id, task_type_name, directive_filename: directive_filename ?? null });
-          const lines = [
-            `Task ID: ${id}`,
-            `Task type: ${task_type_name ?? "none"}`,
-            `Description: ${task_description}`,
-          ];
-          if (directive_filename) {
-            const workspace = `/data/.openclaw/workspace-${agentId}`;
-            const skillName = directive_filename.replace(/\.md$/i, "");
-            const skillPath = `${workspace}/skills/${skillName}/SKILL.md`;
-            lines.push(`Skill file: ${skillPath} — this is a skill file that defines how to execute this task type. Read it and follow its instructions before proceeding.`);
-            log("kc_get_next_task", "skill file attached", { agentId, taskId: id, skillPath });
-          }
-          text = lines.join("\n");
+          return { content: [{ type: "text", text: '{"task":null}' }] };
         }
-        log("kc_get_next_task", "message sent to agent", { agentId, message: text });
-        return {
-          content: [{ type: "text", text }],
+        const t = data.task;
+        const projected = {
+          id: t.id,
+          task_type_name: t.task_type_name ?? null,
+          task_description: t.task_description,
         };
+        if (t.directive_filename) {
+          const skillName = t.directive_filename.replace(/\.md$/i, "");
+          projected.skill_path = `/data/.openclaw/workspace-${agentId}/skills/${skillName}/SKILL.md`;
+        }
+        log("kc_get_next_task", "task found", { agentId, taskId: t.id, task_type_name: projected.task_type_name, skill_path: projected.skill_path ?? null });
+        return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_get_next_task", err.message, { agentId });
-        return {
-          content: [{ type: "text", text: `kc_get_next_task failed: ${err.message}` }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ error: err.message }) }] };
       }
     },
   });
@@ -112,48 +101,39 @@ export default function register(api) {
       log("kc_get_task", "called", { taskId });
       try {
         const data = await callWrapper("GET", `/${encodeURIComponent(taskId)}`);
-        const task = data.task;
-        if (!task) {
+        const t = data.task;
+        if (!t) {
           logError("kc_get_task", "no task in response", { taskId });
-          return { content: [{ type: "text", text: `kc_get_task failed: no task returned for taskId=${taskId}` }] };
+          return { content: [{ type: "text", text: JSON.stringify({ error: `no task returned for taskId=${taskId}` }) }] };
         }
-        const artifacts = task.artifacts ?? [];
-        const { directive_filename, task_type_name, assigned_to_agent_id } = task;
-        log("kc_get_task", "success", { taskId, execution_status: task.execution_status, artifactCount: artifacts.length, task_type_name: task_type_name ?? null, directive_filename: directive_filename ?? null });
-
-        const lines = [
-          `Task: ${task.id}`,
-          `Task type: ${task_type_name ?? "none"}`,
-          `Description: ${task.task_description}`,
-          `Execution status: ${task.execution_status}`,
-          `Approval status: ${task.approval_status}`,
-          `User notes: ${task.user_notes ?? "none"}`,
-          `Agent notes (your last snapshot): ${task.agent_notes ?? "none"}`,
-        ];
-        if (directive_filename && assigned_to_agent_id) {
-          const workspace = `/data/.openclaw/workspace-${assigned_to_agent_id}`;
-          const skillName = directive_filename.replace(/\.md$/i, "");
-          const skillPath = `${workspace}/skills/${skillName}/SKILL.md`;
-          lines.push(`Skill file: ${skillPath} — this is a skill file that defines how to execute this task type. Read it and follow its instructions before proceeding.`);
-          log("kc_get_task", "skill file attached", { taskId, assignedToAgentId: assigned_to_agent_id, skillPath });
+        const projected = {
+          id: t.id,
+          task_type_name: t.task_type_name ?? null,
+          task_description: t.task_description,
+          execution_status: t.execution_status,
+          approval_status: t.approval_status,
+          user_notes: t.user_notes ?? null,
+          agent_notes: t.agent_notes ?? null,
+          artifacts: (t.artifacts ?? []).map((a) => ({
+            id: a.id,
+            external_id: a.external_id,
+          })),
+        };
+        if (t.directive_filename && t.assigned_to_agent_id) {
+          const skillName = t.directive_filename.replace(/\.md$/i, "");
+          projected.skill_path = `/data/.openclaw/workspace-${t.assigned_to_agent_id}/skills/${skillName}/SKILL.md`;
         }
-        lines.push(``, `Artifacts (${artifacts.length}):`);
-        if (artifacts.length === 0) {
-          lines.push(`  none`);
-        } else {
-          for (const a of artifacts) {
-            const meta = a.metadata ? JSON.stringify(a.metadata) : "none";
-            lines.push(`  - [${a.id}] ${a.artifact_type} on ${a.platform}, external_id=${a.external_id}, metadata=${meta}`);
-          }
-        }
-        const text = lines.join("\n");
-        log("kc_get_task", "message sent to agent", { taskId, message: text });
-        return { content: [{ type: "text", text }] };
+        log("kc_get_task", "success", {
+          taskId,
+          execution_status: projected.execution_status,
+          artifactCount: projected.artifacts.length,
+          task_type_name: projected.task_type_name,
+          skill_path: projected.skill_path ?? null,
+        });
+        return { content: [{ type: "text", text: JSON.stringify({ task: projected }) }] };
       } catch (err) {
         logError("kc_get_task", err.message, { taskId });
-        return {
-          content: [{ type: "text", text: `kc_get_task failed: ${err.message}` }],
-        };
+        return { content: [{ type: "text", text: JSON.stringify({ error: err.message }) }] };
       }
     },
   });

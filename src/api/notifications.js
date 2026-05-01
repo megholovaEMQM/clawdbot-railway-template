@@ -102,16 +102,16 @@ function enqueue(event) {
 // callers await the returned promise for retry logic).
 // ---------------------------------------------------------------------------
 
+// Sentinel wake formats (agent's AGENTS.md must define how to handle these):
+//   "kc:wake"             → call kc_get_next_task
+//   "kc:resume:<taskId>"  → call kc_get_task with the given taskId
+// Compact and unambiguous vs. a real human message in the same session.
 function buildMessage(event) {
   if (event.event === "tasks_available" || event.event === "task_assigned") {
-    return "You have a task scheduled. Invoke kc_get_next_task to fetch it and begin.";
+    return "kc:wake";
   }
   if (event.event === "approval_actioned") {
-    const { taskId } = event;
-    return (
-      `Approval actioned for task ${taskId}. ` +
-      `Invoke kc_get_task with taskId=${taskId} to fetch current state and resume.`
-    );
+    return `kc:resume:${event.taskId}`;
   }
   return null;
 }
